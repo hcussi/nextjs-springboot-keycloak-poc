@@ -5,6 +5,20 @@ This project is in active development; sections are added as each step lands.
 
 ## [Unreleased]
 
+### Added (Step 3: Frontend)
+
+- **Login screen.** A clean, minimalist Next.js page with a single Log in button
+  that signs in through Keycloak (Authorization Code + PKCE via next-auth).
+- **Home screen.** After signing in, the app shows who you are and automatically
+  calls the protected `GET /hello`, displaying "Hello World, testuser", with a
+  Log out button. The access token is held in memory and silently refreshed when
+  the 5-minute token expires.
+- **Stacking error toasts.** Any failure in the login/auth flow (a Keycloak error,
+  a token-refresh failure, or an unreachable API) appears as a red toast that
+  auto-dismisses after 5 seconds; multiple errors stack.
+- **One-command full stack.** `docker compose up -d --build` now runs Keycloak,
+  the backend, and the frontend together.
+
 ### Added (Step 2: Backend API)
 
 - **Protected `GET /hello` endpoint.** A Spring Boot 4 (Java 25) service that
@@ -42,6 +56,7 @@ This project is in active development; sections are added as each step lands.
 - Added a `README.md` with prerequisites, run and verify instructions, and the
   test credentials.
 
-### Not yet available
+### Remaining
 
-- The Next.js login UI (Step 3) is planned but not implemented yet.
+- Step 4: orchestration polish (deterministic startup ordering) and a final
+  documentation pass.

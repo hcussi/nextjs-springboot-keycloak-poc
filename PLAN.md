@@ -272,8 +272,8 @@ Each PRD §7 acceptance criterion is covered by:
 - [x] `docker-compose.yml` + `.env`
 - [x] `backend/` Spring Boot 4.0 resource server (`GET /hello`) + Lombok
 - [x] `backend/` JUnit 6 controller test (`401` unauth, `200` with mock JWT)
-- [ ] `frontend/` Next.js + next-auth + Tailwind (Material-style login/home + hello call, sonner error toasts)
-- [ ] `README.md` (run instructions, creds, `/etc/hosts` note)
+- [x] `frontend/` Next.js + next-auth + Tailwind (Material-style login/home + hello call, sonner error toasts)
+- [x] `README.md` (run instructions, creds, `/etc/hosts` note)
 
 ---
 

@@ -7,3 +7,17 @@
 # Gradle / Java build output (backend)
 .gradle/
 build/
+
+# Node / Next.js (frontend). Note: frontend/.env.local IS committed on purpose
+# (dev-only placeholder secrets, like the rest of this POC).
+node_modules/
+.next/
+out/
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+
+# misc
+.DS_Store
+*.pem
+npm-debug.log*

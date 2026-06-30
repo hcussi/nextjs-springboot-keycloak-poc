@@ -67,6 +67,36 @@ services:
     networks:
       - poc-net
 
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Browser-facing API base URL, inlined at build time.
+        NEXT_PUBLIC_API_URL: http://localhost:${BACKEND_PORT}
+    container_name: poc-frontend
+    environment:
+      # Server-side NextAuth config (read at runtime).
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID}
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET}
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
+    ports:
+      - "${FRONTEND_PORT}:3000"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - poc-net
+
 networks:
   poc-net:
     driver: bridge

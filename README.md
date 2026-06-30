@@ -38,14 +38,22 @@ issuer, expiry).
 |-----------|---------------------------------|-----------|-------------------|
 | Keycloak  | Keycloak 26 (dev mode)          | 8081      | ✅ Implemented (Step 1) |
 | Backend   | Spring Boot 4.0 (Java 25)       | 8080      | ✅ Implemented (Step 2) |
-| Frontend  | Next.js (latest) + next-auth    | 3000      | ⏳ Pending (Step 3)     |
-
-> This README documents only what is implemented. Run instructions for the
-> frontend are added when that step lands.
+| Frontend  | Next.js 16 + next-auth v4 + Tailwind | 3000 | ✅ Implemented (Step 3) |
 
 ## Prerequisites
 
 - **Docker** and **Docker Compose**.
+- **A `/etc/hosts` entry** (one-time, required for browser login). The token
+  issuer is fixed to the `keycloak` hostname so the `iss` claim is identical for
+  the browser and the backend. The browser must resolve that hostname to
+  localhost:
+
+  ```
+  127.0.0.1 keycloak
+  ```
+
+  Without it, the redirect to Keycloak during login fails. This is the single
+  most common point of failure.
 
 ## Running Keycloak (Step 1)
 
@@ -156,6 +164,42 @@ Two layers run on JUnit 6 (requires JDK 25):
   + PKCE** flow (the same flow the frontend uses), and asserts the resource server
   validates it end to end. **Requires a running Docker engine.**
 
+## Running the frontend / full stack (Step 3)
+
+The frontend is a Next.js 16 (App Router, TypeScript, Tailwind) app using
+next-auth v4 with the Keycloak provider. Bring up the whole stack with one
+command (make sure the `/etc/hosts` entry above is set first):
+
+```bash
+docker compose up -d --build   # Keycloak, backend, and frontend
+```
+
+Then open **http://localhost:3000** and:
+
+1. The **login screen** shows a single **Log in** button.
+2. **Log in** redirects to Keycloak; sign in as `testuser` / `password`.
+3. You return to the **home screen**, which automatically calls `GET /hello` and
+   shows **"Hello World, testuser"**, with a **Log out** button.
+
+Any failure in the login/auth flow (a Keycloak error redirect, a token-refresh
+failure, or an unreachable API) is shown as a red **toast** in the top-right that
+auto-dismisses after 5 seconds; multiple errors stack.
+
+To smoke-test the whole flow without a browser, run the headless E2E check (it
+logs in, establishes a session, and calls `/hello`):
+
+```bash
+node scripts/e2e-login.mjs   # -> E2E PASSED: ... Hello World, testuser
+```
+
+### Frontend development (outside Docker)
+
+```bash
+cd frontend
+npm install --legacy-peer-deps   # next-auth v4 predates React 19 peer ranges
+npm run dev                       # http://localhost:3000 (needs keycloak + backend up)
+```
+
 ## How it works
 
 - **Issuer / hostname strategy**: Keycloak listens on `8081` and the issuer is
@@ -168,7 +212,12 @@ Two layers run on JUnit 6 (requires JDK 25):
 - **Backend JWT validation**: the resource server fetches the issuer's JWKS at
   startup and validates each token's signature, issuer, and expiry. No token (or
   an invalid one) yields `401`. CORS allows the `http://localhost:3000` origin and
-  the `Authorization` header so the browser can call `/hello` in Step 3.
+  the `Authorization` header so the browser can call `/hello`.
+- **Frontend session**: next-auth runs the Authorization Code + PKCE flow
+  server-side (the confidential client secret stays on the Next.js server). The
+  access token is kept in the next-auth session (in memory, not localStorage) and
+  sent as a Bearer token to the backend. When the 5-minute token expires, a
+  refresh callback silently renews it; if that fails, the UI shows an error toast.
 
 ## Troubleshooting
 
