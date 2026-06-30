@@ -240,6 +240,29 @@ npm run dev                       # http://localhost:3000 (needs keycloak + back
   sent as a Bearer token to the backend. When the 5-minute token expires, a
   refresh callback silently renews it; if that fails, the UI shows an error toast.
 
+## Security
+
+A `security-reviewer` subagent (`.claude/agents/`) audited the auth surface and
+its findings were applied. What the stack enforces:
+
+- **Audience validation**: the backend requires the access token's `aud` to
+  include `nextjs-frontend` (a Keycloak audience mapper sets it), so a token
+  minted for another client is rejected, not just any signature-valid token.
+- **PKCE enforced both sides**: the Keycloak client requires `S256`
+  (`pkce.code.challenge.method`) and next-auth pins `checks: ["pkce", "state"]`.
+- **Refresh token rotation**: `revokeRefreshToken` + `refreshTokenMaxReuse=0`, so
+  a replayed refresh token is rejected.
+- **Least privilege**: `fullScopeAllowed=false`; the client only gets its scopes.
+- **Full logout**: signing out also ends the Keycloak SSO session (back-channel).
+- **Short sessions**: `ssoSessionMaxLifespan` is 1 hour; access tokens 5 minutes.
+- **No PII in logs**; confidential client secret stays server-side; access token
+  in memory (not localStorage); CORS scoped to the one origin.
+
+Still required before any non-local use (intentionally out of scope for this POC):
+TLS everywhere (`sslRequired`, `KC_HTTP_ENABLED=false`), `KC_HOSTNAME_STRICT=true`,
+real per-environment secrets (the committed ones are dev-only placeholders), and a
+migration from next-auth v4 (maintenance mode) to Auth.js v5.
+
 ## Troubleshooting
 
 - **Login redirect fails / Keycloak unreachable in the browser** → confirm the

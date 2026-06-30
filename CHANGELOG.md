@@ -3,6 +3,29 @@
 All notable changes to this proof of concept are documented here.
 This project is in active development; sections are added as each step lands.
 
+## [Unreleased]
+
+### Security hardening
+
+Findings from a security review of the auth surface, applied:
+
+- **Audience validation.** The backend now requires the access token's `aud` to
+  include this API, rejecting tokens minted for other clients in the realm (added
+  a Keycloak audience mapper and an `AudienceValidator`).
+- **PKCE enforced.** The Keycloak client requires PKCE (S256) and next-auth pins
+  it, closing the gap where a code exchange without a verifier was accepted.
+- **Refresh token rotation.** Refresh tokens are now single-use; a replayed token
+  is rejected.
+- **Least-privilege scopes.** The client no longer receives every realm scope.
+- **Full logout.** Signing out now also ends the Keycloak SSO session, so the next
+  login requires credentials again.
+- **Shorter sessions** (SSO max lifespan 10h to 1h) and **no username in logs**.
+- **Non-trivial dev admin password** (still dev-only).
+
+### Added
+
+- A read-only `security-reviewer` subagent and a project `CLAUDE.md`.
+
 ## [0.1.0] - 2026-06-30
 
 Initial, feature-complete proof of concept: an end-to-end OAuth2 / OIDC login
