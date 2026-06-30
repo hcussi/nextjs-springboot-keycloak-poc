@@ -55,6 +55,27 @@ issuer, expiry).
   Without it, the redirect to Keycloak during login fails. This is the single
   most common point of failure.
 
+## Quick start
+
+With Docker running and the `/etc/hosts` entry set:
+
+```bash
+docker compose up -d --build
+```
+
+This starts all three services in order (Keycloak and the backend become healthy
+before the frontend starts). Then open **http://localhost:3000**, click **Log in**,
+sign in as `testuser` / `password`, and the home screen shows
+**"Hello World, testuser"** fetched from the backend.
+
+To verify the whole flow without a browser:
+
+```bash
+node scripts/e2e-login.mjs   # -> E2E PASSED: ... Hello World, testuser
+```
+
+The sections below document and verify each service individually.
+
 ## Running Keycloak (Step 1)
 
 Start Keycloak (imports the `web` realm on first boot):
@@ -204,9 +225,9 @@ npm run dev                       # http://localhost:3000 (needs keycloak + back
 
 - **Issuer / hostname strategy**: Keycloak listens on `8081` and the issuer is
   fixed to `http://keycloak:8081/realms/web` (`KC_HOSTNAME`). This single issuer
-  will be reachable identically by the backend (over the Docker network, by
-  service name) and, once the frontend exists, by the browser, so the `iss` claim
-  is always consistent for discovery, JWKS, redirects, and validation.
+  is reachable identically by the backend (over the Docker network, by service
+  name) and by the browser (via the `/etc/hosts` entry), so the `iss` claim is
+  always consistent for discovery, JWKS, redirects, and validation.
 - **Access tokens are short-lived (5 minutes)** with refresh tokens enabled
   (`accessTokenLifespan: 300` in the realm).
 - **Backend JWT validation**: the resource server fetches the issuer's JWKS at
@@ -221,11 +242,19 @@ npm run dev                       # http://localhost:3000 (needs keycloak + back
 
 ## Troubleshooting
 
-- **Port 8081 already in use** → another process (or a previous Keycloak) holds
-  the port. Stop it, or change `KC_PORT` in `.env`.
-- **Realm edits not reflected** → the realm is imported only when the data is
-  empty. Run `docker compose down` (removes the container) then `up` again to
-  re-import `keycloak/realm-export.json`.
+- **Login redirect fails / Keycloak unreachable in the browser** → confirm the
+  `127.0.0.1 keycloak` line is in `/etc/hosts`. This is the most common issue.
+- **`/hello` returns 401 right after login** → the 5-minute access token may have
+  expired; the refresh callback should renew it. A persistent error toast means
+  refresh failed, sign in again.
+- **Browser fetch to `/hello` blocked by CORS** → the backend must allow the
+  `http://localhost:3000` origin and the `Authorization` header (it does by
+  default in `SecurityConfig`).
+- **Port already in use (8081 / 8080 / 3000)** → another process holds the port.
+  Stop it, or change `KC_PORT` / `BACKEND_PORT` / `FRONTEND_PORT` in `.env`.
+- **Realm edits not reflected** → the realm is imported only when Keycloak's data
+  is empty. Run `docker compose down` then `up` again to re-import
+  `keycloak/realm-export.json`.
 
 ## License
 

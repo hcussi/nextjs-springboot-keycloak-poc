@@ -56,7 +56,11 @@ This project is in active development; sections are added as each step lands.
 - Added a `README.md` with prerequisites, run and verify instructions, and the
   test credentials.
 
-### Remaining
+### Orchestration (Step 4)
 
-- Step 4: orchestration polish (deterministic startup ordering) and a final
-  documentation pass.
+- **Deterministic one-command startup.** Health checks plus
+  `depends_on: condition: service_healthy` make `docker compose up -d --build`
+  bring the stack up in order: Keycloak and the backend become healthy before the
+  frontend starts. Verified from a clean state through the passing E2E flow.
+- Final documentation pass: a Quick start section, and troubleshooting covering
+  the `/etc/hosts`, token-expiry, and CORS pitfalls.
