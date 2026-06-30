@@ -19,7 +19,7 @@
       "clientAuthenticatorType": "client-secret",
       "secret": "nextjs-frontend-secret-dev",
       "standardFlowEnabled": true,
-      "directAccessGrantsEnabled": true,
+      "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "fullScopeAllowed": true,
       "redirectUris": [
