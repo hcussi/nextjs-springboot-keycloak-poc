@@ -4,30 +4,26 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.poc.backend.support.KeycloakAuthCodeClient;
 
 import dasniko.testcontainers.keycloak.KeycloakContainer;
 
 /**
  * Full integration test against a real Keycloak started with Testcontainers,
- * importing the same realm-export.json the production stack uses. Unlike the
- * sliced HelloControllerTest (mocked decoder), this proves the resource server
- * fetches the real JWKS and validates a real, signed token end to end.
+ * importing the same realm-export.json the production stack uses. The token is
+ * obtained through the real Authorization Code + PKCE flow (the same flow the
+ * Next.js frontend uses), so this proves the resource server validates a real,
+ * signed token end to end.
  *
  * Requires a working Docker engine.
  */
@@ -35,6 +31,10 @@ import dasniko.testcontainers.keycloak.KeycloakContainer;
 @AutoConfigureMockMvc
 @Testcontainers
 class HelloControllerIntegrationTest {
+
+    private static final String CLIENT_ID = "nextjs-frontend";
+    private static final String CLIENT_SECRET = "nextjs-frontend-secret-dev";
+    private static final String REDIRECT_URI = "http://localhost:3000/api/auth/callback/keycloak";
 
     @Container
     static final KeycloakContainer KEYCLOAK =
@@ -59,30 +59,12 @@ class HelloControllerIntegrationTest {
 
     @Test
     void returnsGreetingWithRealToken() throws Exception {
-        String token = obtainAccessToken("testuser", "password");
+        KeycloakAuthCodeClient auth = new KeycloakAuthCodeClient(
+            KEYCLOAK.getAuthServerUrl(), "web", CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
+        String token = auth.accessToken("testuser", "password");
 
         mockMvc.perform(get("/hello").header("Authorization", "Bearer " + token))
             .andExpect(status().isOk())
             .andExpect(content().string("Hello World, testuser"));
-    }
-
-    /** Direct-grant token request against the live container (the realm enables it). */
-    private String obtainAccessToken(String username, String password) throws Exception {
-        String form = "grant_type=password"
-            + "&client_id=nextjs-frontend"
-            + "&client_secret=nextjs-frontend-secret-dev"
-            + "&username=" + username
-            + "&password=" + password;
-
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(KEYCLOAK.getAuthServerUrl() + "/realms/web/protocol/openid-connect/token"))
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .POST(HttpRequest.BodyPublishers.ofString(form))
-            .build();
-
-        HttpResponse<String> response =
-            HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
-
-        return new ObjectMapper().readTree(response.body()).get("access_token").asText();
     }
 }

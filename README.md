@@ -152,8 +152,9 @@ Two layers run on JUnit 6 (requires JDK 25):
   needs no Docker or live Keycloak. Covers `401` (no token) and `200` (mock JWT).
 - **Integration test** (`HelloControllerIntegrationTest`): starts a real Keycloak
   via [Testcontainers](https://testcontainers.com/modules/keycloak/), imports the
-  same `realm-export.json`, fetches a real signed token, and asserts the resource
-  server validates it end to end. **Requires a running Docker engine.**
+  same `realm-export.json`, obtains a token through the real **Authorization Code
+  + PKCE** flow (the same flow the frontend uses), and asserts the resource server
+  validates it end to end. **Requires a running Docker engine.**
 
 ## How it works
 

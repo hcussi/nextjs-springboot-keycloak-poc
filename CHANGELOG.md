@@ -16,8 +16,8 @@ This project is in active development; sections are added as each step lands.
   so the browser can call it in Step 3.
 - **Automated tests.** JUnit 6 controller tests cover the unauthorized (`401`)
   and authorized (`200` + greeting) cases. A Testcontainers integration test also
-  spins up a real Keycloak, imports the same realm, and validates a real signed
-  token end to end.
+  spins up a real Keycloak, imports the same realm, obtains a token via the
+  Authorization Code + PKCE flow, and validates it end to end.
 
 ### Added (Step 1: Keycloak)
 
