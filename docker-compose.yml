@@ -37,6 +37,36 @@ services:
     networks:
       - poc-net
 
+  backend:
+    build:
+      context: ./backend
+    container_name: poc-backend
+    environment:
+      # Issuer used to validate JWTs; reachable over the Docker network by
+      # service name. Matches the realm issuer.
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
+    ports:
+      - "${BACKEND_PORT}:8080"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      # App is up once /hello answers; 401 (no token) counts as healthy.
+      test:
+        - CMD
+        - bash
+        - -c
+        - >
+          exec 3<>/dev/tcp/127.0.0.1/8080 &&
+          printf 'GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -qE 'HTTP/1.1 (401|200)' <&3
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    networks:
+      - poc-net
+
 networks:
   poc-net:
     driver: bridge

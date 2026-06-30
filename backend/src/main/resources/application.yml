@@ -1,0 +1,14 @@
+spring:
+  application:
+    name: backend
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # Single issuer used everywhere (see PLAN section 2). Spring fetches
+          # the JWKS from this issuer to validate token signatures, and also
+          # checks the `iss` claim and expiry.
+          issuer-uri: ${KEYCLOAK_ISSUER:http://keycloak:8081/realms/web}
+
+server:
+  port: 8080

@@ -37,11 +37,11 @@ issuer, expiry).
 | Component | Technology                      | Host port | Status            |
 |-----------|---------------------------------|-----------|-------------------|
 | Keycloak  | Keycloak 26 (dev mode)          | 8081      | ✅ Implemented (Step 1) |
-| Backend   | Spring Boot 4.0 (Java 25)       | 8080      | ⏳ Pending (Step 2)     |
+| Backend   | Spring Boot 4.0 (Java 25)       | 8080      | ✅ Implemented (Step 2) |
 | Frontend  | Next.js (latest) + next-auth    | 3000      | ⏳ Pending (Step 3)     |
 
 > This README documents only what is implemented. Run instructions for the
-> backend and frontend are added as each step lands.
+> frontend are added when that step lands.
 
 ## Prerequisites
 
@@ -112,6 +112,42 @@ node scripts/auth-code-flow.mjs
 | Seed password   | `password` |
 | Admin console   | `admin` / `admin` |
 
+## Running the backend (Step 2)
+
+The backend is a Spring Boot 4 (Java 25) OAuth2 resource server exposing a single
+protected endpoint, `GET /hello`. It validates JWTs against Keycloak, so Keycloak
+must be running.
+
+```bash
+docker compose up -d backend   # builds the image, waits for Keycloak to be healthy
+```
+
+### Endpoint
+
+| Request                                   | Response |
+|-------------------------------------------|----------|
+| `GET /hello` with no token                | `401 Unauthorized` |
+| `GET /hello` with an invalid/expired token| `401 Unauthorized` |
+| `GET /hello` with a valid token           | `200` + `Hello World, <preferred_username>` |
+
+### Verify
+
+```bash
+# No token -> 401
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/hello              # -> 401
+
+# With a token (grab one from `node scripts/auth-code-flow.mjs`, then:)
+curl -s http://localhost:8080/hello -H "Authorization: Bearer <access_token>"     # -> Hello World, testuser
+```
+
+### Run the tests
+
+JUnit 6 controller tests (no Docker or live Keycloak needed; requires JDK 25):
+
+```bash
+cd backend && ./gradlew test
+```
+
 ## How it works
 
 - **Issuer / hostname strategy**: Keycloak listens on `8081` and the issuer is
@@ -121,6 +157,10 @@ node scripts/auth-code-flow.mjs
   is always consistent for discovery, JWKS, redirects, and validation.
 - **Access tokens are short-lived (5 minutes)** with refresh tokens enabled
   (`accessTokenLifespan: 300` in the realm).
+- **Backend JWT validation**: the resource server fetches the issuer's JWKS at
+  startup and validates each token's signature, issuer, and expiry. No token (or
+  an invalid one) yields `401`. CORS allows the `http://localhost:3000` origin and
+  the `Authorization` header so the browser can call `/hello` in Step 3.
 
 ## Troubleshooting
 

@@ -258,10 +258,10 @@ Each PRD §7 acceptance criterion is covered by:
 
 ## 6. Deliverables checklist
 
-- [ ] `keycloak/realm-export.json` (`web` realm, client, 5-min token, seed user)
-- [ ] `docker-compose.yml` + `.env`
-- [ ] `backend/` Spring Boot 4.0 resource server (`GET /hello`) + Lombok
-- [ ] `backend/` JUnit 6 controller test (`401` unauth, `200` with mock JWT)
+- [x] `keycloak/realm-export.json` (`web` realm, client, 5-min token, seed user)
+- [x] `docker-compose.yml` + `.env`
+- [x] `backend/` Spring Boot 4.0 resource server (`GET /hello`) + Lombok
+- [x] `backend/` JUnit 6 controller test (`401` unauth, `200` with mock JWT)
 - [ ] `frontend/` Next.js + next-auth + Tailwind (Material-style home/login + hello call)
 - [ ] `README.md` (run instructions, creds, `/etc/hosts` note)
 

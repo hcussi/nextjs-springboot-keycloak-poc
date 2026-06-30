@@ -5,6 +5,18 @@ This project is in active development; sections are added as each step lands.
 
 ## [Unreleased]
 
+### Added (Step 2: Backend API)
+
+- **Protected `GET /hello` endpoint.** A Spring Boot 4 (Java 25) service that
+  greets the logged-in user (`Hello World, <username>`), reading the name from
+  the validated token. Run it with `docker compose up -d backend`.
+- **Real token validation.** The backend verifies each request's JWT against
+  Keycloak (signature, issuer, expiry). Requests with no token, or an invalid or
+  expired one, are rejected with `401`. The Next.js origin is allowed through CORS
+  so the browser can call it in Step 3.
+- **Automated tests.** JUnit 6 controller tests cover the unauthorized (`401`)
+  and authorized (`200` + greeting) cases.
+
 ### Added (Step 1: Keycloak)
 
 - **One-command identity provider.** `docker compose up -d keycloak` starts
@@ -30,5 +42,4 @@ This project is in active development; sections are added as each step lands.
 
 ### Not yet available
 
-- The Spring Boot `GET /hello` API (Step 2) and the Next.js login UI (Step 3)
-  are planned but not implemented yet.
+- The Next.js login UI (Step 3) is planned but not implemented yet.
