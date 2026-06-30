@@ -1,6 +1,6 @@
-# PLAN — Next.js + Spring Boot + Keycloak OAuth2 POC
+# PLAN: Next.js + Spring Boot + Keycloak OAuth2 POC
 
-**Status:** Draft — for review
+**Status:** Draft, for review
 **Companion to:** [PRD.md](PRD.md)
 **Date:** 2026-06-19
 
@@ -79,7 +79,7 @@ discovery, JWKS, browser redirects, and token validation.
 
 ## 3. Build order (incremental, each step verifiable)
 
-### Step 1 — Keycloak realm + Docker Compose skeleton
+### Step 1: Keycloak realm + Docker Compose skeleton
 
 **Goal:** Keycloak 26 boots with the `web` realm pre-imported.
 
@@ -108,7 +108,7 @@ discovery, JWKS, browser redirects, and token validation.
 `http://localhost:8081`, realm `web` present with the client, 5-min token
 lifespan, and seed user.
 
-### Step 2 — Spring Boot backend (resource server)
+### Step 2: Spring Boot backend (resource server)
 
 **Goal:** `GET /hello` protected by JWT validated against Keycloak.
 
@@ -138,7 +138,7 @@ lifespan, and seed user.
 - Obtain a token via Keycloak token endpoint (curl, direct grant or the seed
   user) → `GET /hello` with `Authorization: Bearer <token>` → `200` + greeting.
 
-### Step 3 — Next.js frontend with NextAuth
+### Step 3: Next.js frontend with NextAuth
 
 **Goal:** Home page → Login → Keycloak → back → auto-call `/hello`.
 
@@ -147,7 +147,7 @@ lifespan, and seed user.
 > clientSecret, issuer })`, issuer = `${URL}/realms/${realm}`, route handler at
 > `app/api/auth/[...nextauth]/route.ts` exporting `{ handler as GET, handler as
 > POST }`, and a confidential client ("Client authentication" enabled). It does
-> **not** cover surfacing the access token or token refresh — the two pieces our
+> **not** cover surfacing the access token or token refresh, the two pieces our
 > POC adds below (5-min token → refresh is mandatory).
 
 - Scaffold latest Next.js (App Router, TypeScript).
@@ -174,7 +174,7 @@ lifespan, and seed user.
 (`testuser`/`password`) → redirected back → page shows
 "Hello World, testuser" fetched from the backend.
 
-### Step 4 — Orchestration polish + README
+### Step 4: Orchestration polish + README
 
 - Healthchecks and `depends_on: condition: service_healthy` so startup ordering
   is deterministic.
@@ -207,17 +207,17 @@ Each PRD §7 acceptance criterion is covered by:
 
 ## 5. Risks / watch-items
 
-- **Issuer mismatch** — mitigated by §2; the `/etc/hosts` entry is mandatory and
+- **Issuer mismatch**: mitigated by §2; the `/etc/hosts` entry is mandatory and
   must be documented prominently.
-- **Keycloak 26 hostname options** — v26 changed hostname config; the exact env
+- **Keycloak 26 hostname options**: v26 changed hostname config; the exact env
   var set (`KC_HOSTNAME`, `KC_HOSTNAME_STRICT`) will be validated against the
   26.x docs during Step 1.
-- **NextAuth token refresh** — the 5-min access token will expire during a
+- **NextAuth token refresh**: the 5-min access token will expire during a
   session; the refresh-token callback must be implemented and tested, not just
   the happy-path login.
-- **CORS** — backend must allow the `http://localhost:3000` origin and the
+- **CORS**: backend must allow the `http://localhost:3000` origin and the
   `Authorization` header, or the browser fetch to `/hello` will fail.
-- **Java 25 + Spring Boot compatibility** — confirm the chosen Spring Boot 3.5.x
+- **Java 25 + Spring Boot compatibility**: confirm the chosen Spring Boot 3.5.x
   patch officially supports Java 25 at build time.
 
 ---

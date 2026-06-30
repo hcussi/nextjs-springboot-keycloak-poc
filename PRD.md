@@ -1,6 +1,6 @@
-# PRD — Next.js + Spring Boot + Keycloak OAuth2 Integration (Proof of Concept)
+# PRD: Next.js + Spring Boot + Keycloak OAuth2 Integration (Proof of Concept)
 
-**Status:** Draft — for review
+**Status:** Draft, for review
 **Author:** hcussi@gmail.com
 **Date:** 2026-06-19
 **Type:** Proof of Concept (POC)
@@ -13,11 +13,11 @@ This project is a **proof of concept** demonstrating an end-to-end OAuth2 /
 OpenID Connect (OIDC) authentication and authorization flow across three
 applications wired together with Docker Compose:
 
-1. **Frontend** — a Next.js application (latest version) that provides the
+1. **Frontend**: a Next.js application (latest version) that provides the
    user-facing UI and initiates the login flow.
-2. **Backend** — a Spring Boot application (Java 25) that exposes a single
+2. **Backend**: a Spring Boot application (Java 25) that exposes a single
    protected REST endpoint.
-3. **Identity Provider** — Keycloak 26, acting as the OAuth2 / OIDC
+3. **Identity Provider**: Keycloak 26, acting as the OAuth2 / OIDC
    authorization server that authenticates users and issues JWT tokens.
 
 The goal is to validate the full loop: a user logs in through Keycloak from
@@ -101,7 +101,7 @@ issuer URL reachable by both, using a hostname strategy documented in the plan.
   from a `realm-export.json` file mounted into the container.
 - **FR-K3:** The `web` realm contains an OIDC **client** for the frontend
   application configured for the Authorization Code flow (public or
-  confidential — see Open Questions; NextAuth typically uses a confidential
+  confidential, see Open Questions; NextAuth typically uses a confidential
   client with a secret).
 - **FR-K4:** The client is configured with a **valid redirect URI** pointing
   back to the Next.js application's NextAuth callback
@@ -113,22 +113,22 @@ issuer URL reachable by both, using a hostname strategy documented in the plan.
 - **FR-K8:** At least one **seed test user** exists in the realm (credentials
   documented in the README) so the flow can be exercised immediately.
 
-### 4.2 Backend (Spring Boot — Java 25)
+### 4.2 Backend (Spring Boot, Java 25)
 
 - **FR-B1:** Spring Boot application built and run on **Java 25**.
 - **FR-B2:** Expose a single endpoint **`GET /hello`** (the "Hello World"
   endpoint) returning a simple greeting payload.
-- **FR-B3:** The endpoint is **protected** — it requires a valid OAuth2 JWT
+- **FR-B3:** The endpoint is **protected**: it requires a valid OAuth2 JWT
   Bearer access token. Unauthenticated requests receive `401 Unauthorized`.
 - **FR-B4:** Configure **Spring Security as an OAuth2 Resource Server** that
   validates JWTs against Keycloak using the realm's issuer URI / JWKS endpoint
   (signature, issuer, expiry validation).
 - **FR-B5:** The endpoint may echo a claim from the token (e.g. `preferred_username`)
-  to visibly prove the token was decoded — e.g. `"Hello World, <username>"`.
+  to visibly prove the token was decoded, e.g. `"Hello World, <username>"`.
 - **FR-B6:** CORS configured to allow the Next.js origin (`http://localhost:3000`)
   to call the API from the browser.
 
-### 4.3 Frontend (Next.js — latest)
+### 4.3 Frontend (Next.js, latest)
 
 - **FR-F1:** Built on the **latest Next.js** version (App Router).
 - **FR-F2:** A **Home page** rendered when the user is not authenticated,
@@ -182,7 +182,7 @@ issuer URL reachable by both, using a hostname strategy documented in the plan.
 | Language     | Java 25 (backend), TypeScript (frontend)                      |
 | Identity     | Keycloak 26                                                   |
 | Orchestration| Docker Compose                                               |
-| Keycloak DB  | **Dev mode** (`start-dev`, in-memory) — no external DB        |
+| Keycloak DB  | **Dev mode** (`start-dev`, in-memory), no external DB        |
 
 ---
 
@@ -207,22 +207,22 @@ The POC is considered successful when:
 
 ## 8. Resolved Decisions (reviewed 2026-06-19)
 
-1. **Build tool / version** — ✅ **Gradle 9** ("Gravel nine"), with **Spring
+1. **Build tool / version**: ✅ **Gradle 9** ("Gravel nine"), with **Spring
    Boot 3.5.x** (latest GA line supporting Java 25).
-2. **Keycloak client type** — ✅ Use **NextAuth.js** (https://next-auth.js.org/)
+2. **Keycloak client type**: ✅ Use **NextAuth.js** (https://next-auth.js.org/)
    with its standard **confidential** Keycloak client (client secret held
    server-side in the Next.js route handler).
-3. **Issuer URL strategy** — ✅ Standardize the issuer on the **`keycloak`
+3. **Issuer URL strategy**: ✅ Standardize the issuer on the **`keycloak`
    container hostname**. Both the browser and the backend will resolve Keycloak
    at the same URL/port so the `iss` claim is consistent. Concretely: Keycloak
    listens on **8081** internally and is published as **8081**, the issuer is
    `http://keycloak:8081`, and the developer adds `127.0.0.1 keycloak` to
    `/etc/hosts` so the browser resolves the same hostname the backend uses over
    the Docker network. (Details in PLAN.md.)
-4. **Keycloak persistence** — ✅ **Dev mode** (`start-dev`, in-memory). No
+4. **Keycloak persistence**: ✅ **Dev mode** (`start-dev`, in-memory). No
    external database.
-5. **Ports** — ✅ Frontend `3000`, backend `8080`, Keycloak `8081` (host).
-6. **Token usage** — Backend validates the **access token** (JWT) presented as
+5. **Ports**: ✅ Frontend `3000`, backend `8080`, Keycloak `8081` (host).
+6. **Token usage**: Backend validates the **access token** (JWT) presented as
    the `Authorization: Bearer` credential for `/hello`.
 
 ---
@@ -240,7 +240,7 @@ The POC is considered successful when:
 ## 10. Next Step
 
 Once this PRD is reviewed and approved (and the Open Questions in §8 are
-answered), the next deliverable is **`PLAN.md`** — a step-by-step
+answered), the next deliverable is **`PLAN.md`**, a step-by-step
 implementation plan covering project scaffolding, Keycloak realm export,
 Spring Security resource-server config, NextAuth/Keycloak wiring, and the
 Docker Compose orchestration.

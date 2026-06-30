@@ -1,11 +1,11 @@
-# Next.js + Spring Boot + Keycloak — OAuth2/OIDC Proof of Concept
+# Next.js + Spring Boot + Keycloak: OAuth2/OIDC Proof of Concept
 
 A proof of concept demonstrating an end-to-end OAuth2 / OpenID Connect flow across
 three applications wired together with Docker Compose:
 
-- **Frontend** — Next.js (App Router, TypeScript) with NextAuth (next-auth v4) driving the Keycloak login.
-- **Backend** — Spring Boot (Java 25, Gradle 9) exposing a single protected `GET /hello` endpoint.
-- **Identity Provider** — Keycloak 26, importing a pre-configured `web` realm on startup.
+- **Frontend**: Next.js (App Router, TypeScript) with NextAuth (next-auth v4) driving the Keycloak login.
+- **Backend**: Spring Boot (Java 25, Gradle 9) exposing a single protected `GET /hello` endpoint.
+- **Identity Provider**: Keycloak 26, importing a pre-configured `web` realm on startup.
 
 The goal is to validate the full loop: a user logs in through Keycloak from the
 Next.js app, receives a JWT access token, and uses it to call the protected
@@ -18,7 +18,7 @@ issuer, expiry).
 
 ## Status
 
-🚧 **Planning complete — implementation in progress.** The repository currently
+🚧 **Planning complete, implementation in progress.** The repository currently
 contains the planning documents (`PRD.md`, `PLAN.md`). Application code (Keycloak
 realm, backend, frontend, Docker Compose) is being built per `PLAN.md`, Step 1 → Step 4.
 
@@ -95,7 +95,7 @@ Keycloak admin credentials are configured via Docker Compose environment variabl
 
 ## How it works
 
-- **Issuer / hostname strategy** — Keycloak listens on `8081` internally and is
+- **Issuer / hostname strategy**: Keycloak listens on `8081` internally and is
   published as `8081`. The issuer is `http://keycloak:8081/realms/web`. The backend
   reaches it over the Docker network by service name; the browser reaches the same
   hostname via the `/etc/hosts` entry above. A single consistent issuer is used for
@@ -105,7 +105,7 @@ Keycloak admin credentials are configured via Docker Compose environment variabl
 - **The access token is held in memory** (not persisted to localStorage) and sent as
   a `Bearer` token to the backend.
 - **The backend** runs as a Spring Security OAuth2 Resource Server: `GET /hello`
-  requires a valid JWT. Requests without a token — or with an expired/invalid token —
+  requires a valid JWT. Requests without a token (or with an expired/invalid token)
   receive `401 Unauthorized`. CORS permits the `http://localhost:3000` origin and the
   `Authorization` header.
 
@@ -120,4 +120,4 @@ Keycloak admin credentials are configured via Docker Compose environment variabl
 
 ## License
 
-Proof of concept — not licensed for production use.
+Proof of concept, not licensed for production use.
