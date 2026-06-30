@@ -18,7 +18,8 @@ public class HelloController {
     @GetMapping("/hello")
     public String hello(@AuthenticationPrincipal Jwt jwt) {
         String username = jwt.getClaimAsString("preferred_username");
-        log.info("GET /hello served for user '{}'", username);
+        // Avoid logging the username (PII); log at debug without the value.
+        log.debug("GET /hello served");
         return "Hello World, " + username;
     }
 }
