@@ -75,7 +75,7 @@ export default function Home() {
     return (
       <Centered>
         <Card>
-          <h1 className="text-2xl font-semibold tracking-tight">Welcome</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Welcome</h1>
           <p className="mt-2 text-sm text-slate-500">
             Sign in with Keycloak to access the protected greeting.
           </p>
@@ -96,7 +96,7 @@ export default function Home() {
     <Centered>
       <Card>
         <p className="text-xs uppercase tracking-wide text-slate-400">Signed in as</p>
-        <p className="mt-1 text-lg font-medium">{displayName}</p>
+        <p className="mt-1 text-lg font-medium text-slate-900">{displayName}</p>
 
         <div className="mt-6 rounded-xl border border-slate-100 bg-slate-50 px-4 py-6 text-center">
           {helloLoading ? (
