@@ -84,16 +84,23 @@ curl -s http://localhost:8081/realms/web/.well-known/openid-configuration \
   | grep -o '"issuer":"[^"]*"'                                                    # -> "issuer":"http://keycloak:8081/realms/web"
 ```
 
-Get a token for the seed user (also proves the confidential client and password
-work):
+### Get a token (Authorization Code + PKCE)
+
+To obtain a token the way the real app will, run `scripts/auth-code-flow.mjs`. It
+performs the **Authorization Code flow with PKCE** (the same flow next-auth uses
+in Step 3): it starts a temporary server on the client's redirect URI, opens the
+Keycloak login, and exchanges the returned `code` (plus the PKCE verifier and the
+confidential client secret) for tokens.
+
+> Requires the browser to reach Keycloak at `http://keycloak:8081`, so add
+> `127.0.0.1 keycloak` to `/etc/hosts` first. Port `3000` must be free.
+> No dependencies (Node 18+ only).
 
 ```bash
-curl -s -X POST http://localhost:8081/realms/web/protocol/openid-connect/token \
-  -d grant_type=password \
-  -d client_id=nextjs-frontend \
-  -d client_secret=nextjs-frontend-secret-dev \
-  -d username=testuser \
-  -d password=password | python3 -m json.tool
+node scripts/auth-code-flow.mjs
+# a browser opens -> log in as testuser / password
+# the terminal prints the token response and decoded access-token claims:
+#   iss: http://keycloak:8081/realms/web   preferred_username: testuser   lifespan: 300s
 ```
 
 ### Test credentials (dev-only)
