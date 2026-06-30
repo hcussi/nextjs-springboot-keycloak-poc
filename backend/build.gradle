@@ -1,7 +1,7 @@
 plugins {
     id 'java'
-    id 'org.springframework.boot' version '4.0.7'
-    id 'io.spring.dependency-management' version '1.1.7'
+    alias(libs.plugins.spring.boot)
+    alias(libs.plugins.spring.dependency.management)
 }
 
 group = 'com.poc'
@@ -19,24 +19,24 @@ repositories {
 }
 
 dependencies {
-    implementation 'org.springframework.boot:spring-boot-starter-web'
-    implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+    implementation libs.spring.boot.starter.web
+    implementation libs.spring.boot.starter.oauth2.resource.server
 
-    compileOnly 'org.projectlombok:lombok'
-    annotationProcessor 'org.projectlombok:lombok'
+    compileOnly libs.lombok
+    annotationProcessor libs.lombok
 
-    testImplementation 'org.springframework.boot:spring-boot-starter-test'
-    testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
-    testImplementation 'org.springframework.security:spring-security-test'
+    testImplementation libs.spring.boot.starter.test
+    testImplementation libs.spring.boot.starter.webmvc.test
+    testImplementation libs.spring.security.test
 
     // Integration test: real Keycloak via Testcontainers. The 4.2.x module line
     // targets Testcontainers 2.0.x, matching the version Spring Boot 4 manages.
-    testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
-    testImplementation 'com.github.dasniko:testcontainers-keycloak:4.2.1'
+    testImplementation libs.testcontainers.junit.jupiter
+    testImplementation libs.testcontainers.keycloak
 
-    testCompileOnly 'org.projectlombok:lombok'
-    testAnnotationProcessor 'org.projectlombok:lombok'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testCompileOnly libs.lombok
+    testAnnotationProcessor libs.lombok
+    testRuntimeOnly libs.junit.platform.launcher
 }
 
 // Make the single source-of-truth realm file available on the test classpath so
