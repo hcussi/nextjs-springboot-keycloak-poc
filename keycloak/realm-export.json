@@ -7,7 +7,7 @@
   "duplicateEmailsAllowed": false,
   "accessTokenLifespan": 300,
   "ssoSessionIdleTimeout": 1800,
-  "ssoSessionMaxLifespan": 36000,
+  "ssoSessionMaxLifespan": 3600,
   "revokeRefreshToken": true,
   "refreshTokenMaxReuse": 0,
   "clients": [
