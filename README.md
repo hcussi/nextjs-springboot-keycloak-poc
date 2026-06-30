@@ -142,11 +142,18 @@ curl -s http://localhost:8080/hello -H "Authorization: Bearer <access_token>"   
 
 ### Run the tests
 
-JUnit 6 controller tests (no Docker or live Keycloak needed; requires JDK 25):
-
 ```bash
 cd backend && ./gradlew test
 ```
+
+Two layers run on JUnit 6 (requires JDK 25):
+
+- **Controller slice test** (`HelloControllerTest`): mocks the JWT decoder, so it
+  needs no Docker or live Keycloak. Covers `401` (no token) and `200` (mock JWT).
+- **Integration test** (`HelloControllerIntegrationTest`): starts a real Keycloak
+  via [Testcontainers](https://testcontainers.com/modules/keycloak/), imports the
+  same `realm-export.json`, fetches a real signed token, and asserts the resource
+  server validates it end to end. **Requires a running Docker engine.**
 
 ## How it works
 
