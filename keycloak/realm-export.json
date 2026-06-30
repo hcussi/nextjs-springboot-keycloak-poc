@@ -30,7 +30,20 @@
       ],
       "attributes": {
         "post.logout.redirect.uris": "http://localhost:3000"
-      }
+      },
+      "protocolMappers": [
+        {
+          "name": "audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.client.audience": "nextjs-frontend",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "users": [

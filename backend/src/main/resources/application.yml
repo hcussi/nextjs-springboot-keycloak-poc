@@ -10,5 +10,11 @@ spring:
           # checks the `iss` claim and expiry.
           issuer-uri: ${KEYCLOAK_ISSUER:http://keycloak:8081/realms/web}
 
+# The access token's `aud` claim must include this value (see SecurityConfig).
+app:
+  security:
+    jwt:
+      audience: ${JWT_AUDIENCE:nextjs-frontend}
+
 server:
   port: 8080
