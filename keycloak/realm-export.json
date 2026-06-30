@@ -8,7 +8,8 @@
   "accessTokenLifespan": 300,
   "ssoSessionIdleTimeout": 1800,
   "ssoSessionMaxLifespan": 36000,
-  "revokeRefreshToken": false,
+  "revokeRefreshToken": true,
+  "refreshTokenMaxReuse": 0,
   "clients": [
     {
       "clientId": "nextjs-frontend",
