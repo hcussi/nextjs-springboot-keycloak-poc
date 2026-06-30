@@ -73,4 +73,24 @@ export const authOptions: NextAuthOptions = {
       return session;
     },
   },
+  events: {
+    // Back-channel logout: ending the next-auth session also ends the Keycloak
+    // SSO session, so the next "Log in" requires credentials again.
+    async signOut({ token }) {
+      if (!token?.refreshToken) return;
+      try {
+        await fetch(`${KEYCLOAK_ISSUER}/protocol/openid-connect/logout`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: CLIENT_ID,
+            client_secret: CLIENT_SECRET,
+            refresh_token: token.refreshToken,
+          }),
+        });
+      } catch {
+        // Best-effort: the local session is cleared regardless.
+      }
+    },
+  },
 };
