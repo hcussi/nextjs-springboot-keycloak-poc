@@ -3,7 +3,7 @@
 All notable changes to this proof of concept are documented here.
 This project is in active development; sections are added as each step lands.
 
-## [Unreleased]
+## [0.1.0] - 2026-06-30
 
 Initial, feature-complete proof of concept: an end-to-end OAuth2 / OIDC login
 across a Next.js frontend, a Spring Boot backend, and Keycloak, runnable with a
