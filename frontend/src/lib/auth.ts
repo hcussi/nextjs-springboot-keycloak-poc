@@ -47,6 +47,8 @@ export const authOptions: NextAuthOptions = {
       clientId: CLIENT_ID,
       clientSecret: CLIENT_SECRET,
       issuer: KEYCLOAK_ISSUER,
+      // Send PKCE (S256) and state; Keycloak enforces PKCE on this client.
+      checks: ["pkce", "state"],
     }),
   ],
   callbacks: {
