@@ -3,7 +3,7 @@
 All notable changes to this proof of concept are documented here.
 This project is in active development; sections are added as each step lands.
 
-## [Unreleased]
+## [0.1.1] - 2026-06-30
 
 ### Security hardening
 
