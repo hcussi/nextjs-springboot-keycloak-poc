@@ -1,0 +1,42 @@
+# OAuth2/OIDC POC stack. Step 1 wires up Keycloak only; the backend and
+# frontend services are added in later steps. Values come from .env.
+#
+# NOTE: requires `127.0.0.1 keycloak` in /etc/hosts so the browser resolves the
+# same `keycloak` hostname the backend uses, keeping a single token issuer
+# (http://keycloak:8081/realms/web). See README.
+
+services:
+  keycloak:
+    image: ${KEYCLOAK_IMAGE}
+    container_name: poc-keycloak
+    command: start-dev --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_HTTP_PORT: ${KC_PORT}
+      KC_HOSTNAME: http://keycloak:${KC_PORT}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+    ports:
+      - "${KC_PORT}:${KC_PORT}"
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    healthcheck:
+      # The Keycloak image has no curl/wget; probe the realm's OIDC discovery
+      # endpoint over a raw bash TCP socket and assert HTTP 200.
+      test:
+        - CMD-SHELL
+        - >
+          exec 3<>/dev/tcp/127.0.0.1/${KC_PORT} &&
+          printf 'GET /realms/${KEYCLOAK_REALM}/.well-known/openid-configuration HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '200 OK' <&3
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    networks:
+      - poc-net
+
+networks:
+  poc-net:
+    driver: bridge

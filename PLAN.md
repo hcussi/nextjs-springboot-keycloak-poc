@@ -85,6 +85,11 @@ discovery, JWKS, browser redirects, and token validation.
 
 ## 3. Build order (incremental, each step verifiable)
 
+> **Documentation convention:** every step ends by updating `README.md` so it
+> documents only what is implemented so far. Run instructions for a service are
+> added in the step that builds it, never before. Step 4 is the final
+> consolidation pass.
+
 ### Step 1: Keycloak realm + Docker Compose skeleton
 
 **Goal:** Keycloak 26 boots with the `web` realm pre-imported.
@@ -109,6 +114,8 @@ discovery, JWKS, browser redirects, and token validation.
   - Env: `KC_BOOTSTRAP_ADMIN_USERNAME/PASSWORD`, `KC_HTTP_PORT=8081`,
     `KC_HOSTNAME=http://keycloak:8081`, `KC_HOSTNAME_STRICT=false`
   - Ports `8081:8081`, plus a healthcheck on the realm endpoint.
+- **Update `README.md`:** prerequisites (Docker), how to run Keycloak, the
+  Keycloak URLs with expected status, the verify commands, and seed credentials.
 
 **Verify:** `docker compose up keycloak` → admin console at
 `http://localhost:8081`, realm `web` present with the client, 5-min token
@@ -145,6 +152,9 @@ lifespan, and seed user.
 - `Dockerfile` (multi-stage: Gradle build → JRE 25 runtime).
 - Add `backend` service to compose: build context `./backend`, port `8080:8080`,
   `depends_on` keycloak (healthy), on the shared network.
+- **Update `README.md`:** add the backend to the status table, how to run it,
+  the `/hello` URL with its `401` (no token) / `200` (valid token) behavior, and
+  how to call it with a token from the Step 1 snippet.
 
 **Verify:**
 - `./gradlew test` passes (controller test green).
@@ -188,6 +198,9 @@ lifespan, and seed user.
   `NEXT_PUBLIC_API_URL=http://localhost:8080`.
 - `Dockerfile` for Next.js; add `frontend` service to compose, port `3000:3000`,
   `depends_on` backend + keycloak.
+- **Update `README.md`:** add the frontend to the status table, the
+  **`/etc/hosts` requirement** (now needed for browser login), the full
+  `docker compose up` E2E walkthrough, and the login/logout flow.
 
 **Verify (full E2E):** `http://localhost:3000` → Login → Keycloak login
 (`testuser`/`password`) → redirected back → page shows
@@ -198,9 +211,10 @@ lifespan, and seed user.
 - Healthchecks and `depends_on: condition: service_healthy` so startup ordering
   is deterministic.
 - Single `.env` for shared compose values (ports, client secret, issuer).
-- `README.md`: prerequisites (Docker, the `/etc/hosts` entry), `docker compose up`,
-  test-user credentials, the URLs, and a troubleshooting note on the issuer/hosts
-  requirement.
+- **Finalize `README.md`:** consolidation pass over the incrementally-built docs.
+  Confirm the full `docker compose up` flow, prerequisites (Docker, the
+  `/etc/hosts` entry), test-user credentials, all URLs, and the issuer/hosts
+  troubleshooting note are accurate end to end.
 
 **Verify:** From a clean state, `docker compose up` brings the whole stack to the
 passing E2E flow with no manual steps beyond the one-time `/etc/hosts` entry.

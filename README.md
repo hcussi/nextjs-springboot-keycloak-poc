@@ -16,12 +16,6 @@ issuer, expiry).
 > marked as such. See [`PRD.md`](PRD.md) for full requirements and
 > [`PLAN.md`](PLAN.md) for the implementation plan.
 
-## Status
-
-🚧 **Planning complete, implementation in progress.** The repository currently
-contains the planning documents (`PRD.md`, `PLAN.md`). Application code (Keycloak
-realm, backend, frontend, Docker Compose) is being built per `PLAN.md`, Step 1 → Step 4.
-
 ## Architecture
 
 ```
@@ -40,48 +34,67 @@ realm, backend, frontend, Docker Compose) is being built per `PLAN.md`, Step 1 �
   └──────────────┘
 ```
 
-| Component | Technology                     | Host port | Role                          |
-|-----------|--------------------------------|-----------|-------------------------------|
-| Frontend  | Next.js (latest) + next-auth   | 3000      | UI, initiates OIDC login      |
-| Backend   | Spring Boot (Java 25, Gradle 9)| 8080      | Protected REST resource server|
-| Keycloak  | Keycloak 26 (dev mode)         | 8081      | OIDC authorization server     |
+| Component | Technology                      | Host port | Status            |
+|-----------|---------------------------------|-----------|-------------------|
+| Keycloak  | Keycloak 26 (dev mode)          | 8081      | ✅ Implemented (Step 1) |
+| Backend   | Spring Boot 4.0 (Java 25)       | 8080      | ⏳ Pending (Step 2)     |
+| Frontend  | Next.js (latest) + next-auth    | 3000      | ⏳ Pending (Step 3)     |
+
+> This README documents only what is implemented. Run instructions for the
+> backend and frontend are added as each step lands.
 
 ## Prerequisites
 
 - **Docker** and **Docker Compose**.
-- **A `/etc/hosts` entry** (one-time, required). The JWT issuer is standardized on
-  the `keycloak` container hostname so the `iss` claim is identical for the browser
-  and the backend. The browser must resolve that hostname to localhost:
 
-  ```
-  127.0.0.1 keycloak
-  ```
+## Running Keycloak (Step 1)
 
-  Without this line the browser cannot reach Keycloak at `http://keycloak:8081`
-  and login will fail. This is the single most common point of failure.
-
-## Running the stack
-
-From a clean checkout (once implementation is complete):
+Start Keycloak (imports the `web` realm on first boot):
 
 ```bash
-docker compose up
+docker compose up -d keycloak   # start in the background
+docker compose ps               # check status (waits for healthcheck)
+docker compose logs -f keycloak # follow logs (Ctrl-C to stop following)
 ```
 
-This starts all three services. Healthchecks ensure Keycloak is ready (realm
-imported) before the backend and frontend come up.
+Stop it:
 
-Then open **http://localhost:3000**, click **Login**, and authenticate with the
-seed user below. After login the app automatically calls `GET /hello` and displays
-the greeting.
+```bash
+docker compose down             # stop and remove containers (realm re-imports on next up)
+```
 
 ### URLs
 
-| Service             | URL                          |
-|---------------------|------------------------------|
-| Frontend            | http://localhost:3000        |
-| Backend `/hello`    | http://localhost:8080/hello  |
-| Keycloak admin      | http://localhost:8081        |
+| Endpoint               | URL                                                               | Expected |
+|------------------------|-------------------------------------------------------------------|----------|
+| Keycloak admin console | http://localhost:8081/admin                                       | `302` to console (login: `admin`/`admin`) |
+| Realm `web`            | http://localhost:8081/realms/web                                  | `200` |
+| OIDC discovery         | http://localhost:8081/realms/web/.well-known/openid-configuration | `200`, issuer `http://keycloak:8081/realms/web` |
+
+### Verify
+
+Confirm the realm imported and the issuer is correct:
+
+```bash
+# Realm reachable
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8081/realms/web        # -> 200
+
+# Issuer in the discovery document
+curl -s http://localhost:8081/realms/web/.well-known/openid-configuration \
+  | grep -o '"issuer":"[^"]*"'                                                    # -> "issuer":"http://keycloak:8081/realms/web"
+```
+
+Get a token for the seed user (also proves the confidential client and password
+work):
+
+```bash
+curl -s -X POST http://localhost:8081/realms/web/protocol/openid-connect/token \
+  -d grant_type=password \
+  -d client_id=nextjs-frontend \
+  -d client_secret=nextjs-frontend-secret-dev \
+  -d username=testuser \
+  -d password=password | python3 -m json.tool
+```
 
 ### Test credentials (dev-only)
 
@@ -90,33 +103,25 @@ the greeting.
 | Realm           | `web`      |
 | Seed user       | `testuser` |
 | Seed password   | `password` |
-
-Keycloak admin credentials are configured via Docker Compose environment variables.
+| Admin console   | `admin` / `admin` |
 
 ## How it works
 
-- **Issuer / hostname strategy**: Keycloak listens on `8081` internally and is
-  published as `8081`. The issuer is `http://keycloak:8081/realms/web`. The backend
-  reaches it over the Docker network by service name; the browser reaches the same
-  hostname via the `/etc/hosts` entry above. A single consistent issuer is used for
-  discovery, JWKS, browser redirects, and token validation.
-- **Access tokens are short-lived (5 minutes)** and refresh tokens are enabled, so
-  the frontend refreshes the session via NextAuth rather than forcing re-login.
-- **The access token is held in memory** (not persisted to localStorage) and sent as
-  a `Bearer` token to the backend.
-- **The backend** runs as a Spring Security OAuth2 Resource Server: `GET /hello`
-  requires a valid JWT. Requests without a token (or with an expired/invalid token)
-  receive `401 Unauthorized`. CORS permits the `http://localhost:3000` origin and the
-  `Authorization` header.
+- **Issuer / hostname strategy**: Keycloak listens on `8081` and the issuer is
+  fixed to `http://keycloak:8081/realms/web` (`KC_HOSTNAME`). This single issuer
+  will be reachable identically by the backend (over the Docker network, by
+  service name) and, once the frontend exists, by the browser, so the `iss` claim
+  is always consistent for discovery, JWKS, redirects, and validation.
+- **Access tokens are short-lived (5 minutes)** with refresh tokens enabled
+  (`accessTokenLifespan: 300` in the realm).
 
 ## Troubleshooting
 
-- **Login redirect fails / Keycloak unreachable in the browser** → confirm the
-  `127.0.0.1 keycloak` line is in `/etc/hosts`.
-- **`/hello` returns 401 after login** → the access token may have expired (5-minute
-  lifetime); confirm the NextAuth refresh flow is working.
-- **Browser fetch to `/hello` blocked by CORS** → the backend must allow the
-  `http://localhost:3000` origin and the `Authorization` header.
+- **Port 8081 already in use** → another process (or a previous Keycloak) holds
+  the port. Stop it, or change `KC_PORT` in `.env`.
+- **Realm edits not reflected** → the realm is imported only when the data is
+  empty. Run `docker compose down` (removes the container) then `up` again to
+  re-import `keycloak/realm-export.json`.
 
 ## License
 
