@@ -164,7 +164,8 @@ lifespan, and seed user.
 
 ### Step 3: Next.js frontend with NextAuth
 
-**Goal:** Home page → Login → Keycloak → back → auto-call `/hello`.
+**Goal:** Login screen → Keycloak → back → home screen that auto-calls `/hello`,
+with login/auth errors surfaced as stacking, auto-hiding error toasts.
 
 > **Reference:** [Keycloak Auth on Next.js 13.4 using NextAuth](https://dev.to/farisdurrani/keycloak-auth-on-nextjs-134-using-nextauth-57e0)
 > confirms our baseline: `next-auth ^4.x` + `KeycloakProvider({ clientId,
@@ -178,8 +179,8 @@ lifespan, and seed user.
 - Styling: minimalist, clean **Material-style** look. Use a clean sans-serif
   (e.g. Roboto / Inter via `next/font`), generous whitespace, a single accent
   color, subtle elevation/rounded corners on the card and buttons. Keep it to
-  Tailwind utility classes (`tailwind.config.ts` + `globals.css`); no component
-  library.
+  Tailwind utility classes (`tailwind.config.ts` + `globals.css`); no UI
+  component library beyond `sonner` for toasts (styled to match).
 - Install `next-auth` (v4, https://next-auth.js.org/) and configure the
   **Keycloak provider** in `src/app/api/auth/[...nextauth]/route.ts`:
   - `clientId: nextjs-frontend`, `clientSecret`, `issuer: http://keycloak:8081/realms/web`.
@@ -188,11 +189,20 @@ lifespan, and seed user.
     localStorage).
   - Token-refresh callback using the refresh token when the 5-min access token
     expires.
-- `src/app/page.tsx` (client component):
-  - If unauthenticated → dummy home page + single **Login** button
-    (`signIn("keycloak")`).
-  - If authenticated → call `GET http://localhost:8080/hello` with the access
-    token as a Bearer header and render the response; show a **Logout** button.
+- `src/app/page.tsx` (client component), two states:
+  - **Unauthenticated → login screen:** minimal placeholder content and a single
+    **Login** button (`signIn("keycloak")`).
+  - **Authenticated → home screen:** auto-call `GET http://localhost:8080/hello`
+    with the access token as a Bearer header, render the greeting, and show a
+    **Logout** button.
+- **Error toasts (sonner):** add the `sonner` `<Toaster />` in `layout.tsx` and
+  raise an **error-style toast** for any failure in the login/auth flow:
+  - The next-auth `error` query param on the callback redirect (e.g. OAuth or
+    `OAuthCallback` errors), read on mount and shown as a toast.
+  - A token-refresh failure surfaced from the session (`session.error`).
+  - Also reuse it for a failed `/hello` fetch on the home screen.
+  - Toasts **auto-dismiss after 5s** (`duration: 5000`) and **stack** when
+    multiple errors occur (sonner stacks by default).
 - `.env.local`: `NEXTAUTH_URL=http://localhost:3000`, `NEXTAUTH_SECRET`,
   `KEYCLOAK_CLIENT_ID/SECRET`, `KEYCLOAK_ISSUER=http://keycloak:8081/realms/web`,
   `NEXT_PUBLIC_API_URL=http://localhost:8080`.
@@ -262,7 +272,7 @@ Each PRD §7 acceptance criterion is covered by:
 - [x] `docker-compose.yml` + `.env`
 - [x] `backend/` Spring Boot 4.0 resource server (`GET /hello`) + Lombok
 - [x] `backend/` JUnit 6 controller test (`401` unauth, `200` with mock JWT)
-- [ ] `frontend/` Next.js + next-auth + Tailwind (Material-style home/login + hello call)
+- [ ] `frontend/` Next.js + next-auth + Tailwind (Material-style login/home + hello call, sonner error toasts)
 - [ ] `README.md` (run instructions, creds, `/etc/hosts` note)
 
 ---
