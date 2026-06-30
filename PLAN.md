@@ -5,10 +5,11 @@
 **Date:** 2026-06-19
 
 This plan turns the approved PRD into a concrete, ordered implementation guide.
-It reflects the resolved decisions: **Gradle 9**, **Spring Boot 3.5.x / Java 25**,
-**NextAuth.js (next-auth)** with a confidential Keycloak client, **Keycloak 26**
-in dev mode, issuer standardized on the **`keycloak`** container hostname, ports
-**3000 / 8080 / 8081**.
+It reflects the resolved decisions: **Gradle 9**, **Spring Boot 4.0 / Java 25**
+with **Lombok** and **JUnit 6** tests, **NextAuth.js (next-auth)** with a
+confidential Keycloak client and a **Tailwind CSS** (minimalist, Material-style)
+UI, **Keycloak 26** in dev mode, issuer standardized on the **`keycloak`**
+container hostname, ports **3000 / 8080 / 8081**.
 
 > No code is written yet. This document defines *what* will be built and *in what
 > order*. Implementation begins only after this plan is approved.
@@ -26,22 +27,27 @@ nextjs-springboot-keycloak-poc/
 ├── .env                           # shared compose vars (ports, secrets, issuer)
 ├── keycloak/
 │   └── realm-export.json          # "web" realm, imported on startup
-├── backend/                       # Spring Boot (Java 25, Gradle 9)
+├── backend/                       # Spring Boot 4.0 (Java 25, Gradle 9, Lombok)
 │   ├── build.gradle
 │   ├── settings.gradle
 │   ├── gradle/wrapper/...          # Gradle 9 wrapper
 │   ├── Dockerfile
-│   └── src/main/java/com/poc/backend/
-│       ├── BackendApplication.java
-│       ├── config/SecurityConfig.java
-│       └── web/HelloController.java
-│   └── src/main/resources/application.yml
-└── frontend/                      # Next.js (latest, App Router) + next-auth
+│   ├── src/main/java/com/poc/backend/
+│   │   ├── BackendApplication.java
+│   │   ├── config/SecurityConfig.java
+│   │   └── web/HelloController.java
+│   ├── src/main/resources/application.yml
+│   └── src/test/java/com/poc/backend/
+│       └── web/HelloControllerTest.java   # JUnit 6 controller test
+└── frontend/                      # Next.js (latest, App Router) + next-auth + Tailwind
     ├── package.json
     ├── next.config.ts
+    ├── tailwind.config.ts
+    ├── postcss.config.mjs
     ├── Dockerfile
     ├── .env.local                 # NEXTAUTH_URL, client id/secret, issuer, api url
     └── src/app/
+        ├── globals.css            # Tailwind directives + base theme
         ├── page.tsx               # home page (login button OR hello result)
         ├── layout.tsx
         └── api/auth/[...nextauth]/route.ts   # NextAuth handler (Keycloak provider)
@@ -113,8 +119,11 @@ lifespan, and seed user.
 **Goal:** `GET /hello` protected by JWT validated against Keycloak.
 
 - Generate Gradle 9 project (`build.gradle`, wrapper) targeting **Java 25**,
-  **Spring Boot 3.5.x**. Dependencies:
-  `spring-boot-starter-web`, `spring-boot-starter-oauth2-resource-server`.
+  **Spring Boot 4.0**. Dependencies:
+  `spring-boot-starter-web`, `spring-boot-starter-oauth2-resource-server`,
+  `spring-boot-starter-test`, and **Lombok** (`compileOnly` +
+  `annotationProcessor`, plus the test variants). Tests run on **JUnit 6**
+  (Jupiter), which Spring Boot 4 ships by default.
 - `application.yml`:
   ```yaml
   spring:
@@ -129,11 +138,16 @@ lifespan, and seed user.
   `http://localhost:3000`.
 - `HelloController.java`: `GET /hello` returns
   `"Hello World, <preferred_username>"` read from the JWT (`@AuthenticationPrincipal Jwt`).
+  Lombok (`@RequiredArgsConstructor`, `@Slf4j`) where it reduces boilerplate.
+- `HelloControllerTest.java`: **JUnit 6** slice test (`@WebMvcTest` +
+  `spring-security-test`) asserting: no token → `401`; a mock JWT with
+  `preferred_username` → `200` and the greeting body. No live Keycloak needed.
 - `Dockerfile` (multi-stage: Gradle build → JRE 25 runtime).
 - Add `backend` service to compose: build context `./backend`, port `8080:8080`,
   `depends_on` keycloak (healthy), on the shared network.
 
 **Verify:**
+- `./gradlew test` passes (controller test green).
 - `GET /hello` with no token → `401`.
 - Obtain a token via Keycloak token endpoint (curl, direct grant or the seed
   user) → `GET /hello` with `Authorization: Bearer <token>` → `200` + greeting.
@@ -150,7 +164,12 @@ lifespan, and seed user.
 > **not** cover surfacing the access token or token refresh, the two pieces our
 > POC adds below (5-min token → refresh is mandatory).
 
-- Scaffold latest Next.js (App Router, TypeScript).
+- Scaffold latest Next.js (App Router, TypeScript) with **Tailwind CSS**.
+- Styling: minimalist, clean **Material-style** look. Use a clean sans-serif
+  (e.g. Roboto / Inter via `next/font`), generous whitespace, a single accent
+  color, subtle elevation/rounded corners on the card and buttons. Keep it to
+  Tailwind utility classes (`tailwind.config.ts` + `globals.css`); no component
+  library.
 - Install `next-auth` (v4, https://next-auth.js.org/) and configure the
   **Keycloak provider** in `src/app/api/auth/[...nextauth]/route.ts`:
   - `clientId: nextjs-frontend`, `clientSecret`, `issuer: http://keycloak:8081/realms/web`.
@@ -217,8 +236,9 @@ Each PRD §7 acceptance criterion is covered by:
   the happy-path login.
 - **CORS**: backend must allow the `http://localhost:3000` origin and the
   `Authorization` header, or the browser fetch to `/hello` will fail.
-- **Java 25 + Spring Boot compatibility**: confirm the chosen Spring Boot 3.5.x
-  patch officially supports Java 25 at build time.
+- **Java 25 + Spring Boot 4.0 compatibility**: confirm the chosen Spring Boot
+  4.0 release supports Java 25 at build time, and that the Gradle 9 wrapper,
+  Lombok, and JUnit 6 versions align with the Spring Boot 4 dependency BOM.
 
 ---
 
@@ -226,8 +246,9 @@ Each PRD §7 acceptance criterion is covered by:
 
 - [ ] `keycloak/realm-export.json` (`web` realm, client, 5-min token, seed user)
 - [ ] `docker-compose.yml` + `.env`
-- [ ] `backend/` Spring Boot resource server (`GET /hello`)
-- [ ] `frontend/` Next.js + next-auth (home/login + hello call)
+- [ ] `backend/` Spring Boot 4.0 resource server (`GET /hello`) + Lombok
+- [ ] `backend/` JUnit 6 controller test (`401` unauth, `200` with mock JWT)
+- [ ] `frontend/` Next.js + next-auth + Tailwind (Material-style home/login + hello call)
 - [ ] `README.md` (run instructions, creds, `/etc/hosts` note)
 
 ---
