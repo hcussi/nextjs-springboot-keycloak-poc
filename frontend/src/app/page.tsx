@@ -10,8 +10,15 @@ const TOAST_DURATION = 5000;
 export default function Home() {
   const { data: session, status } = useSession();
   const [greeting, setGreeting] = useState<string | null>(null);
-  const [helloLoading, setHelloLoading] = useState(false);
+  // The access token whose /hello request has settled (resolved or failed).
+  // Loading is derived from this rather than a setState in the effect, which
+  // avoids a synchronous setState during the effect (react-hooks/set-state-in-effect).
+  const [settledToken, setSettledToken] = useState<string | null>(null);
   const refreshErrorShown = useRef(false);
+
+  const accessToken = session?.accessToken;
+  const helloLoading =
+    status === "authenticated" && !!accessToken && settledToken !== accessToken;
 
   // Surface login errors that NextAuth reports via the ?error= callback redirect.
   useEffect(() => {
@@ -33,11 +40,10 @@ export default function Home() {
 
   // Once authenticated, automatically call the protected endpoint.
   useEffect(() => {
-    if (status !== "authenticated" || !session?.accessToken) return;
+    if (status !== "authenticated" || !accessToken) return;
     let active = true;
-    setHelloLoading(true);
     fetch(`${API_URL}/hello`, {
-      headers: { Authorization: `Bearer ${session.accessToken}` },
+      headers: { Authorization: `Bearer ${accessToken}` },
     })
       .then(async (res) => {
         if (!res.ok) throw new Error(`API responded ${res.status}`);
@@ -50,12 +56,12 @@ export default function Home() {
         if (active) toast.error(`Could not reach the API: ${err.message}`, { duration: TOAST_DURATION });
       })
       .finally(() => {
-        if (active) setHelloLoading(false);
+        if (active) setSettledToken(accessToken);
       });
     return () => {
       active = false;
     };
-  }, [status, session?.accessToken]);
+  }, [status, accessToken]);
 
   if (status === "loading") {
     return (
