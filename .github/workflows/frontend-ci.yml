@@ -3,18 +3,19 @@ name: Frontend CI
 # Lints and builds the Next.js frontend on GitHub-hosted runners.
 # next-auth v4 predates the React 19 peer ranges, so installs require
 # --legacy-peer-deps (same flag used locally).
+#
+# The workflow always triggers on PRs/pushes to main (no on:paths filter), but the
+# actual `build` job only runs when frontend files change. This keeps the required
+# `build` status check reported on every PR: when nothing under frontend/ changed
+# the job is skipped, and GitHub treats a skipped required check as passing, so
+# unrelated (e.g. docs-only) PRs are not blocked. A path filter at the on: level
+# would instead never create the check and block merges on the required-check rule.
 
 on:
   push:
     branches: [main]
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend-ci.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend-ci.yml'
 
 # Cancel an in-progress run when a new commit is pushed to the same ref.
 concurrency:
@@ -25,7 +26,26 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect frontend changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+              - '.github/workflows/frontend-ci.yml'
+
   build:
+    needs: changes
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-latest
     defaults:
       run:

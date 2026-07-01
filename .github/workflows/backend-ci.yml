@@ -3,18 +3,19 @@ name: Backend CI
 # Runs the Spring Boot test suite on GitHub-hosted runners.
 # The integration test (HelloControllerIntegrationTest) boots a real Keycloak
 # via Testcontainers; ubuntu-latest ships with Docker, so no extra setup is needed.
+#
+# The workflow always triggers on PRs/pushes to main (no on:paths filter), but the
+# actual `test` job only runs when backend files change. This keeps the required
+# `test` status check reported on every PR: when nothing under backend/ changed the
+# job is skipped, and GitHub treats a skipped required check as passing, so
+# unrelated (e.g. docs-only) PRs are not blocked. A path filter at the on: level
+# would instead never create the check and block merges on the required-check rule.
 
 on:
   push:
     branches: [main]
-    paths:
-      - 'backend/**'
-      - '.github/workflows/backend-ci.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'backend/**'
-      - '.github/workflows/backend-ci.yml'
 
 # Cancel an in-progress run when a new commit is pushed to the same ref.
 concurrency:
@@ -25,7 +26,26 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect backend changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '.github/workflows/backend-ci.yml'
+
   test:
+    needs: changes
+    if: ${{ needs.changes.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
     defaults:
       run:
