@@ -137,9 +137,73 @@ node scripts/auth-code-flow.mjs
 | What            | Value      |
 |-----------------|------------|
 | Realm           | `web`      |
-| Seed user       | `testuser` |
-| Seed password   | `password` |
+| Seed user       | `testuser` (password + seeded TOTP, can reach `acr=pro`) |
+| No-factor user  | `basicuser` (password only; denied at step-up) |
+| Brute-force user| `bruteuser` (password + TOTP; used by the brute-force test) |
+| Seed password   | `password` (all three users) |
 | Admin console   | `admin` / `admin` |
+
+### Step-up authentication: `basic` vs `pro` (Iteration 2, Step 1)
+
+The realm can issue tokens at two assurance levels, mapped by the realm
+attribute `acr.loa.map` = `{"basic":1,"pro":2}`:
+
+| ACR (`acr` claim) | Level of Authentication | Factors required            |
+|-------------------|-------------------------|-----------------------------|
+| `basic`           | LoA 1                   | password                    |
+| `pro`             | LoA 2                   | password **+ TOTP** (step-up) |
+
+A normal login (no `acr` requested) yields `acr=basic` and is unchanged from
+iteration 1. A client that requests `acr=pro` triggers a custom browser flow
+(`browser-stepup`) whose conditional **Condition - Level of Authentication**
+executions run the TOTP (`auth-otp-form`) step **only** when LoA 2 is requested.
+The LoA-2 condition uses **max age 0**, so requesting `pro` always re-verifies the
+second factor, even inside an existing `basic` SSO session (the base `Cookie`
+execution cannot short-circuit it). The `acr` claim is emitted on the **access
+token** (not only the ID token) via Keycloak's built-in `acr` client scope, which
+is a default scope on `nextjs-frontend`, because the backend enforces on the
+access token the browser forwards.
+
+**Seed TOTP credential (dev-only).** `testuser` is pre-seeded with a TOTP
+credential so the second factor can be completed non-interactively:
+
+| What          | Value                                |
+|---------------|--------------------------------------|
+| Secret (raw)  | `stepupTOTPseedDEVonly1234567890AB`  |
+| Algorithm     | HmacSHA1, 6 digits, 30s period       |
+
+Keycloak uses the **raw UTF-8 bytes** of that secret string as the HMAC key, so a
+standard RFC 6238 TOTP over those bytes produces codes Keycloak accepts. Compute
+the current code with the helper (defaults to the seed above; pass a different
+seed as an argument):
+
+```bash
+node scripts/totp.mjs            # -> current 6-digit code for testuser
+node scripts/totp.mjs <seed>     # -> code for any raw-string seed
+```
+
+> ⚠️ **This TOTP seed is a second-factor secret, a different and higher risk
+> class than the committed dev password.** It exists only so this throwaway realm
+> is reproducible with one command. **Never reuse it for any account outside this
+> POC realm.** Unlike a password, a leaked second-factor seed silently defeats the
+> entire point of the second factor and cannot be meaningfully rotated away from
+> without re-enrolling the credential. It is not for production, ever.
+
+**Observe the `acr` claim.** Request `pro` via the OIDC `claims`/`acr_values`
+parameters on the authorization request, complete the OTP step, then decode the
+resulting **access** token: its `acr` is `pro` (a base login shows `basic`). A
+`refresh_token` grant on an elevated session keeps `acr=pro` for the SSO session
+lifetime without re-running OTP (the `max age: 0` re-challenge applies at the
+authorization request, not per refresh).
+
+With the full stack up, a headless smoke test drives the whole step-up flow
+(next-auth sign-in with `acr_values=pro` -> Keycloak OTP form -> elevated session)
+and asserts the resulting access token is `acr=pro`. It reuses `scripts/totp.mjs`
+to compute the code:
+
+```bash
+node scripts/e2e-stepup.mjs   # -> E2E PASSED: step-up login -> OTP -> session with acr=pro
+```
 
 ## Running the backend (Step 2)
 
@@ -255,6 +319,13 @@ its findings were applied. What the stack enforces:
 - **Least privilege**: `fullScopeAllowed=false`; the client only gets its scopes.
 - **Full logout**: signing out also ends the Keycloak SSO session (back-channel).
 - **Short sessions**: `ssoSessionMaxLifespan` is 1 hour; access tokens 5 minutes.
+- **Brute-force protection**: `bruteForceProtected` is on (`failureFactor` 10),
+  so repeated bad password/OTP attempts get throttled and locked, which matters now
+  that a 6-digit TOTP gates the elevated (`pro`) level.
+- **Step-up needs a provisioned factor**: the `CONFIGURE_TOTP` required action is
+  disabled, so a user without a second factor is denied at step-up ("credential
+  setup required") rather than being allowed to self-enroll one inline. `acr=pro`
+  therefore means a pre-provisioned factor was used.
 - **No PII in logs**; confidential client secret stays server-side; access token
   in memory (not localStorage); CORS scoped to the one origin.
 
