@@ -33,10 +33,29 @@ npm run lint                     # eslint (flat config)
 Full stack and end-to-end check:
 
 ```bash
-docker compose up -d --build     # Keycloak + backend + frontend, health-gated startup
-node scripts/e2e-login.mjs       # headless login -> session -> /hello smoke test
-docker compose down              # stop (realm re-imports on next up)
+docker compose up -d --build         # Keycloak + backend + frontend, health-gated startup
+node scripts/e2e-login.mjs           # base login -> session -> /hello smoke test
+node scripts/e2e-stepup.mjs          # step-up: OTP -> session with acr=pro (testuser)
+node scripts/e2e-stepup-denied.mjs   # negative: basicuser (no factor) denied at acr=pro
+node scripts/e2e-stepup-bruteforce.mjs  # brute-force locks the OTP factor (bruteuser)
+node scripts/totp.mjs                # current TOTP code for the step-up seed
+docker compose down                  # stop (realm re-imports on next up)
 ```
+
+## Before committing
+
+Not enforced by a hook (the e2e needs the full Docker stack healthy, so a hard
+pre-commit gate would be flaky); treated as a required manual checklist instead:
+
+1. **Run the security-reviewer subagent** over the pending diff (it is read-only
+   and reports findings by severity). Especially required when the change touches
+   auth, tokens, the Keycloak realm/flows, secrets, or CORS.
+2. **Run the e2e suite green** against a running stack: `e2e-login.mjs`,
+   `e2e-stepup.mjs`, `e2e-stepup-denied.mjs`, and `e2e-stepup-bruteforce.mjs` must
+   all print `E2E PASSED`, and `cd backend && ./gradlew test` must pass. If the
+   realm changed, re-import first
+   (`docker compose up -d keycloak --force-recreate`) so the checks run against the
+   committed file, not stale in-memory state.
 
 ## Architecture and non-obvious decisions
 
