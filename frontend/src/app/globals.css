@@ -1,26 +1,58 @@
 @import "tailwindcss";
 
+/* Dark-first "secure access / credential" design system. This app is a step-up
+   auth demo, so the palette ties to the assurance concept: a deep navy canvas,
+   lit surfaces, and a teal accent that reads as "verified / unlocked". It is a
+   committed single-theme dark look (no light path), which also resolves the old
+   broken light/dark pairing. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: dark;
 }
 
+/* Non-inline so the raw colors are emitted as :root custom properties and can be
+   used both by Tailwind utilities (bg-canvas, text-ink, border-hairline, …) and
+   by the plain-CSS body rule below (var(--color-canvas)). */
+@theme {
+  --color-canvas: #0b1020;
+  --color-surface: #121a2e;
+  --color-hairline: rgba(255, 255, 255, 0.08);
+  --color-ink: #e7ecf5;
+  --color-muted: #93a0bb;
+  --color-accent: #35e0c8;
+}
+
+/* Inline so the font utilities resolve to the next/font vars set on <html>. */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* Card entrance: fade + 4px rise. */
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
+.animate-card-in {
+  animation: card-in 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  min-height: 100vh;
+  background-color: var(--color-canvas);
+  /* One restrained radial glow behind the panel for depth (plus a fainter corner
+     wash), fixed so it does not scroll with content. */
+  background-image:
+    radial-gradient(60rem 40rem at 50% -8rem, rgba(53, 224, 200, 0.1), transparent 60%),
+    radial-gradient(50rem 30rem at 100% 110%, rgba(53, 224, 200, 0.05), transparent 55%);
+  background-attachment: fixed;
+  color: var(--color-ink);
+  /* Actually use Geist (the old `Arial` override downloaded Geist but rendered Arial). */
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
 }
