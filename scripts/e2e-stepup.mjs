@@ -18,7 +18,7 @@
 //   USERNAME / PASSWORD (default testuser / password)
 //   TOTP_SECRET  (default: the dev seed baked into scripts/totp.mjs)
 
-import { totp, DEFAULT_SEED } from "./totp.mjs";
+import { totp, secondsLeft, DEFAULT_SEED } from "./totp.mjs";
 
 const FRONT = process.env.FRONTEND_URL ?? "http://localhost:3000";
 const API = process.env.API_URL ?? "http://localhost:8080";
@@ -58,6 +58,14 @@ const form = (obj) => new URLSearchParams(obj).toString();
 const formAction = (html) =>
   html.match(/action="([^"]*login-actions\/authenticate[^"]*)"/)?.[1]?.replace(/&amp;/g, "&");
 const decodeJwt = (jwt) => JSON.parse(Buffer.from(jwt.split(".")[1], "base64url").toString("utf8"));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// A TOTP code with comfortable validity left: if the current window is about to
+// roll (<3s), wait for the next one so the code stays valid through submission.
+async function freshCode() {
+  if (secondsLeft() < 3) await sleep((secondsLeft() + 1) * 1000);
+  return totp(SECRET);
+}
 
 async function main() {
   // 1) CSRF token for the sign-in POST.
@@ -95,12 +103,15 @@ async function main() {
     let html = await res.text();
     if (!/name="otp"/.test(html)) throw new Error("expected the OTP form after password, but did not get it (is acr=pro forcing step-up?)");
 
-    // 5) Submit the TOTP. Retry across a code-rotation boundary if the first is
-    //    rejected (Keycloak re-renders the OTP form with an error on a 200).
+    // 5) Submit the TOTP. A code submitted right at a 30s rotation boundary can be
+    //    rejected; to make this deterministic we never submit a code with under 3s
+    //    of validity left, and on a rejection we wait for the next window so the
+    //    retry uses a genuinely different code (recomputing within the same window
+    //    would just resubmit the same rejected code).
     let accepted = false;
     for (let attempt = 1; attempt <= 3 && !accepted; attempt++) {
       const otpAction = formAction(html);
-      const code = totp(SECRET);
+      const code = await freshCode();
       console.log(`OTP attempt ${attempt}: submitting ${code}`);
       res = await go(otpAction, {
         method: "POST",
@@ -109,7 +120,8 @@ async function main() {
       });
       location = res.headers.get("location");
       if (res.status === 302 && location) { accepted = true; break; }
-      html = await res.text(); // rejected -> re-render, try a fresh code
+      html = await res.text(); // rejected -> wait for a new window, then retry
+      if (attempt < 3) await sleep((secondsLeft() + 1) * 1000);
     }
     if (!accepted) throw new Error("OTP was not accepted after retries");
   } else if (res.status !== 302) {

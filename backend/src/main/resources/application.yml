@@ -15,6 +15,12 @@ app:
   security:
     jwt:
       audience: ${JWT_AUDIENCE:nextjs-frontend}
+    # Assurance level (acr claim) required by /server-details. Must be a key in
+    # the realm's acr.loa.map (keycloak/realm-export.json); a rename there must be
+    # mirrored here or /server-details is denied forever. Asserted by an
+    # integration test.
+    stepup:
+      acr: ${STEPUP_ACR:pro}
 
 server:
   port: 8080
