@@ -136,21 +136,27 @@ async function main() {
   const callback = await go(location);
   if (callback.status !== 302) throw new Error(`callback did not redirect (HTTP ${callback.status})`);
 
-  // 7) Read the session and assert the access token was elevated to acr=pro.
+  // 7) Read the session and assert the access token was elevated to acr=pro,
+  //    both in the token itself and in the surfaced session.acr UI hint.
   const session = await (await go(`${FRONT}/api/auth/session`)).json();
   if (!session?.accessToken) throw new Error(`no session/accessToken: ${JSON.stringify(session)}`);
   const claims = decodeJwt(session.accessToken);
   console.log("session.user:", JSON.stringify(session.user));
-  console.log(`access-token acr: ${claims.acr}`);
+  console.log(`access-token acr: ${claims.acr}  session.acr: ${session.acr}`);
   if (claims.acr !== ACR) throw new Error(`expected acr=${ACR}, got acr=${claims.acr}`);
+  if (session.acr !== ACR) throw new Error(`session.acr not surfaced as ${ACR}: got ${session.acr}`);
 
-  // 8) Sanity: the elevated token is a valid bearer for the base endpoint too.
+  // 8) The elevated token unlocks /server-details (the endpoint the UI calls).
+  const sd = await fetch(`${API}/server-details`, { headers: { authorization: `Bearer ${session.accessToken}` } });
+  const details = await sd.json();
+  console.log(`GET /server-details -> ${sd.status} (application: ${details.application})`);
+  if (sd.status !== 200 || !details.application) throw new Error("elevated token failed on /server-details");
+
+  // 9) Sanity: still a valid bearer for the base endpoint too.
   const hello = await fetch(`${API}/hello`, { headers: { authorization: `Bearer ${session.accessToken}` } });
-  const text = await hello.text();
-  console.log(`GET /hello -> ${hello.status}: ${text}`);
   if (hello.status !== 200) throw new Error("elevated token failed on /hello");
 
-  console.log(`\nE2E PASSED: step-up login -> OTP -> session with acr=${claims.acr}`);
+  console.log(`\nE2E PASSED: step-up login -> OTP -> session acr=${session.acr} -> /server-details 200`);
 }
 
 main().catch((err) => {
