@@ -4,7 +4,7 @@ A proof of concept demonstrating an end-to-end OAuth2 / OpenID Connect flow acro
 three applications wired together with Docker Compose:
 
 - **Frontend**: Next.js (App Router, TypeScript) with NextAuth (next-auth v4) driving the Keycloak login.
-- **Backend**: Spring Boot (Java 25, Gradle 9) exposing a single protected `GET /hello` endpoint.
+- **Backend**: Spring Boot (Java 25, Gradle 9) exposing a protected `GET /hello` and a step-up-gated `GET /server-details` endpoint.
 - **Identity Provider**: Keycloak 26, importing a pre-configured `web` realm on startup.
 
 The goal is to validate the full loop: a user logs in through Keycloak from the
@@ -207,8 +207,9 @@ node scripts/e2e-stepup.mjs   # -> E2E PASSED: step-up login -> OTP -> session w
 
 ## Running the backend (Step 2)
 
-The backend is a Spring Boot 4 (Java 25) OAuth2 resource server exposing a single
-protected endpoint, `GET /hello`. It validates JWTs against Keycloak, so Keycloak
+The backend is a Spring Boot 4 (Java 25) OAuth2 resource server exposing a base
+protected endpoint, `GET /hello`, and an elevated `GET /server-details` that
+requires step-up (`acr=pro`). It validates JWTs against Keycloak, so Keycloak
 must be running.
 
 ```bash
@@ -217,11 +218,21 @@ docker compose up -d backend   # builds the image, waits for Keycloak to be heal
 
 ### Endpoint
 
-| Request                                   | Response |
-|-------------------------------------------|----------|
-| `GET /hello` with no token                | `401 Unauthorized` |
-| `GET /hello` with an invalid/expired token| `401 Unauthorized` |
-| `GET /hello` with a valid token           | `200` + `Hello World, <preferred_username>` |
+| Request                                        | Response |
+|------------------------------------------------|----------|
+| `GET /hello` with no token                     | `401 Unauthorized` |
+| `GET /hello` with an invalid/expired token     | `401 Unauthorized` |
+| `GET /hello` with a valid token                | `200` + `Hello World, <preferred_username>` |
+| `GET /server-details` with no/invalid token    | `401 Unauthorized` (ordinary bearer challenge) |
+| `GET /server-details` with a `basic` token     | `401` + `WWW-Authenticate: Bearer error="insufficient_user_authentication", acr_values="pro"` (RFC 9470 step-up) |
+| `GET /server-details` with a `pro` token       | `200` + JSON runtime details (app, version, JVM, uptime, profiles, hostname, time) |
+
+`/server-details` maps the token's `acr` claim to an `ACR_<value>` authority and
+requires `ACR_pro` (the required level is `app.security.stepup.acr`, default
+`pro`, not a hardcoded literal). A valid but under-assured token gets the RFC 9470
+`401` step-up challenge instead of a bare `403`, and `WWW-Authenticate` is exposed
+via CORS so the browser `fetch` can read it. The payload carries no secrets,
+tokens, or environment dumps.
 
 ### Verify
 
@@ -241,13 +252,19 @@ cd backend && ./gradlew test
 
 Two layers run on JUnit 6 (requires JDK 25):
 
-- **Controller slice test** (`HelloControllerTest`): mocks the JWT decoder, so it
-  needs no Docker or live Keycloak. Covers `401` (no token) and `200` (mock JWT).
-- **Integration test** (`HelloControllerIntegrationTest`): starts a real Keycloak
-  via [Testcontainers](https://testcontainers.com/modules/keycloak/), imports the
-  same `realm-export.json`, obtains a token through the real **Authorization Code
-  + PKCE** flow (the same flow the frontend uses), and asserts the resource server
-  validates it end to end. **Requires a running Docker engine.**
+- **Controller slice tests** (`HelloControllerTest`, `ServerDetailsControllerTest`):
+  mock the JWT decoder, so they need no Docker or live Keycloak.
+  `ServerDetailsControllerTest` covers `401` (no token), the `401` step-up
+  challenge for a `basic` token, and `200` + payload for a `pro` token.
+- **Integration tests** (`HelloControllerIntegrationTest`,
+  `ServerDetailsControllerIntegrationTest`): start a real Keycloak via
+  [Testcontainers](https://testcontainers.com/modules/keycloak/), import the same
+  `realm-export.json`, and obtain real tokens through the **Authorization Code +
+  PKCE** flow. The server-details test drives the real OTP second factor to get a
+  `pro` token (asserting `200`), confirms a `basic` token gets the step-up
+  challenge, and asserts `app.security.stepup.acr` is a key in the realm's
+  `acr.loa.map` (so a Keycloak rename fails the build rather than silently denying
+  all access). **Requires a running Docker engine.**
 
 ## Running the frontend / full stack (Step 3)
 

@@ -9,6 +9,7 @@ import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Base64;
@@ -16,6 +17,9 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -57,8 +61,19 @@ public class KeycloakAuthCodeClient {
         this.redirectUri = redirectUri;
     }
 
-    /** Logs the user in via the Authorization Code + PKCE flow and returns the access token. */
+    /** Logs the user in via the Authorization Code + PKCE flow and returns the access token (base level). */
     public String accessToken(String username, String password) throws Exception {
+        return accessToken(username, password, null, null);
+    }
+
+    /**
+     * Logs the user in via Authorization Code + PKCE, optionally requesting a
+     * step-up assurance level and completing the TOTP second factor.
+     *
+     * @param acrValues  requested {@code acr_values} (e.g. {@code "pro"}), or null for a base login
+     * @param totpSecret raw TOTP seed to complete the OTP form when step-up prompts it, or null
+     */
+    public String accessToken(String username, String password, String acrValues, String totpSecret) throws Exception {
         HttpClient client = HttpClient.newBuilder()
             .followRedirects(HttpClient.Redirect.NEVER)
             .build();
@@ -77,12 +92,14 @@ public class KeycloakAuthCodeClient {
             + "&scope=" + enc("openid profile email")
             + "&state=" + state
             + "&code_challenge=" + codeChallenge
-            + "&code_challenge_method=S256";
+            + "&code_challenge_method=S256"
+            + (acrValues != null ? "&acr_values=" + enc(acrValues) : "");
         HttpResponse<String> loginPage = send(client, cookies,
             HttpRequest.newBuilder(URI.create(authorizeUrl)).GET());
         String formAction = extractLoginAction(loginPage);
 
-        // 2) Submit credentials -> 302 redirect to redirectUri with the code.
+        // 2) Submit credentials. A base login redirects straight to the callback;
+        //    a step-up login instead returns the OTP form (HTTP 200).
         String formBody = "username=" + enc(username)
             + "&password=" + enc(password)
             + "&credentialId=";
@@ -90,9 +107,24 @@ public class KeycloakAuthCodeClient {
             HttpRequest.newBuilder(URI.create(formAction))
                 .header("Content-Type", "application/x-www-form-urlencoded")
                 .POST(HttpRequest.BodyPublishers.ofString(formBody)));
-        String location = afterLogin.headers().firstValue("Location").orElseThrow(() ->
-            new IllegalStateException("Expected a login redirect but got HTTP "
-                + afterLogin.statusCode() + ": " + snippet(afterLogin.body())));
+
+        String location = afterLogin.headers().firstValue("Location").orElse(null);
+        if (location == null) {
+            // 2b) Step-up: complete the OTP form with a computed TOTP.
+            if (totpSecret == null) {
+                throw new IllegalStateException("Password step returned no redirect (OTP expected?) "
+                    + "but no TOTP secret was provided: HTTP " + afterLogin.statusCode() + ": " + snippet(afterLogin.body()));
+            }
+            String otpAction = extractLoginAction(afterLogin);
+            String otpBody = "otp=" + enc(totp(totpSecret)) + "&login=" + enc("Sign In");
+            HttpResponse<String> afterOtp = send(client, cookies,
+                HttpRequest.newBuilder(URI.create(otpAction))
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .POST(HttpRequest.BodyPublishers.ofString(otpBody)));
+            location = afterOtp.headers().firstValue("Location").orElseThrow(() ->
+                new IllegalStateException("Expected a callback redirect after OTP but got HTTP "
+                    + afterOtp.statusCode() + ": " + snippet(afterOtp.body())));
+        }
         String code = queryParam(location, "code");
 
         // 3) Exchange the code (+ PKCE verifier + client secret) for tokens.
@@ -153,6 +185,25 @@ public class KeycloakAuthCodeClient {
             }
         }
         throw new IllegalStateException("Query parameter '" + name + "' not found in " + url);
+    }
+
+    /**
+     * RFC 6238 TOTP for the current 30s window: HmacSHA1, 6 digits, secret used
+     * as raw UTF-8 bytes (matching the realm OTP policy and how Keycloak stores
+     * the seed). Same computation as {@code scripts/totp.mjs}.
+     */
+    private static String totp(String secret) throws Exception {
+        long counter = System.currentTimeMillis() / 1000L / 30L;
+        byte[] message = ByteBuffer.allocate(8).putLong(counter).array();
+        Mac mac = Mac.getInstance("HmacSHA1");
+        mac.init(new SecretKeySpec(secret.getBytes(UTF_8), "HmacSHA1"));
+        byte[] hash = mac.doFinal(message);
+        int offset = hash[hash.length - 1] & 0x0f;
+        int binary = ((hash[offset] & 0x7f) << 24)
+            | ((hash[offset + 1] & 0xff) << 16)
+            | ((hash[offset + 2] & 0xff) << 8)
+            | (hash[offset + 3] & 0xff);
+        return String.format("%06d", binary % 1_000_000);
     }
 
     private static String randomUrlToken(int bytes) {
