@@ -30,7 +30,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-slate-100 text-slate-900">
+      <body className="min-h-full flex flex-col">
         <Providers>{children}</Providers>
         {/* richColors styles error toasts red; multiple toasts stack, each
             auto-hides after the per-toast duration (5s) set where we call toast.error. */}

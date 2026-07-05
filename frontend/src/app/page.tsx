@@ -7,6 +7,22 @@ import { toast } from "sonner";
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 const TOAST_DURATION = 5000;
 
+// Solid accent primary: keyline + subtle hover lift/press instead of a heavy drop
+// shadow, with a crisp focus-visible ring on the dark canvas.
+const PRIMARY_BTN =
+  "inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-4 py-2.5 " +
+  "text-sm font-semibold text-canvas shadow-[0_0_0_1px_rgba(53,224,200,0.5)] transition duration-150 " +
+  "hover:-translate-y-0.5 hover:shadow-[0_8px_24px_-8px_rgba(53,224,200,0.7)] " +
+  "active:translate-y-0 active:shadow-[0_0_0_1px_rgba(53,224,200,0.5)] " +
+  "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-canvas " +
+  "disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-[0_0_0_1px_rgba(53,224,200,0.5)]";
+
+// Quiet secondary (log out): hairline keyline, muted text, faint hover fill.
+const SECONDARY_BTN =
+  "inline-flex w-full items-center justify-center rounded-xl border border-hairline px-4 py-2.5 " +
+  "text-sm font-medium text-muted transition hover:bg-white/5 hover:text-ink " +
+  "focus:outline-none focus-visible:ring-2 focus-visible:ring-white/20 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas";
+
 // Assurance levels this client is willing to request. The required level comes
 // from the backend's WWW-Authenticate challenge, which travels over plain HTTP
 // and is rewritable on-path, so we allow-list it before forwarding it into a
@@ -157,16 +173,25 @@ export default function Home() {
     return (
       <Centered>
         <Card>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Welcome</h1>
-          <p className="mt-2 text-sm text-slate-500">
+          <div className="flex items-center gap-3">
+            <BrandMark />
+            <span className="font-mono text-[11px] font-medium uppercase tracking-[0.22em] text-accent">
+              Secure access
+            </span>
+          </div>
+          <h1 className="mt-7 text-3xl font-semibold tracking-tight text-ink">Welcome</h1>
+          <p className="mt-2 text-sm leading-relaxed text-muted">
             Sign in with Keycloak to access the protected greeting.
           </p>
-          <button
-            onClick={() => signIn("keycloak")}
-            className="mt-8 w-full rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
-          >
-            Log in
+          <button onClick={() => signIn("keycloak")} className={`mt-8 ${PRIMARY_BTN}`}>
+            <LockGlyph className="h-4 w-4" />
+            Continue with Keycloak
           </button>
+          <div className="mt-6 border-t border-hairline pt-4">
+            <p className="text-center font-mono text-[11px] tracking-wide text-muted">
+              Protected by Keycloak · OIDC
+            </p>
+          </div>
         </Card>
       </Centered>
     );
@@ -177,33 +202,33 @@ export default function Home() {
   return (
     <Centered>
       <Card>
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <div>
-            <p className="text-xs uppercase tracking-wide text-slate-400">Signed in as</p>
-            <p className="mt-1 text-lg font-medium text-slate-900">{displayName}</p>
+            <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted">Signed in as</p>
+            <p className="mt-1 text-lg font-medium text-ink">{displayName}</p>
           </div>
           <LevelBadge acr={acr} />
         </div>
 
-        <div className="mt-6 rounded-xl border border-slate-100 bg-slate-50 px-4 py-6 text-center">
+        <div className="mt-6 rounded-xl border border-hairline bg-white/[0.03] px-4 py-6 text-center">
           {helloLoading ? (
             <Spinner />
           ) : (
-            <p className="text-lg font-semibold text-slate-800">{greeting ?? "—"}</p>
+            <p className="text-lg font-semibold text-ink">{greeting ?? "—"}</p>
           )}
-          <p className="mt-2 text-xs text-slate-400">response from GET /hello</p>
+          <p className="mt-2 font-mono text-[11px] text-muted">response from GET /hello</p>
         </div>
 
-        <div className="mt-6 border-t border-slate-100 pt-6">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-slate-700">Server details</p>
-            <span className="text-xs text-slate-400">requires step-up (pro)</span>
+        <div className="mt-6 border-t border-hairline pt-6">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-medium text-ink">Server details</p>
+            <span className="font-mono text-[11px] text-muted">requires step-up (pro)</span>
           </div>
 
           {serverDetails ? (
             <ServerDetailsPanel details={serverDetails} />
           ) : (
-            <p className="mt-3 text-xs text-slate-400">
+            <p className="mt-3 text-xs leading-relaxed text-muted">
               Loading these prompts a second factor if you are not already elevated.
             </p>
           )}
@@ -211,16 +236,13 @@ export default function Home() {
           <button
             onClick={() => loadServerDetails(true)}
             disabled={detailsLoading}
-            className="mt-4 w-full rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+            className={`mt-4 ${PRIMARY_BTN}`}
           >
             {detailsLoading ? "Loading…" : serverDetails ? "Reload server details" : "Load server details"}
           </button>
         </div>
 
-        <button
-          onClick={() => signOut({ callbackUrl: "/" })}
-          className="mt-6 w-full rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2"
-        >
+        <button onClick={() => signOut({ callbackUrl: "/" })} className={`mt-6 ${SECONDARY_BTN}`}>
           Log out
         </button>
       </Card>
@@ -273,16 +295,27 @@ function clearStepUpMarker() {
   }
 }
 
+// The assurance badge is the visual payoff of the step-up: it flips from a quiet
+// neutral (basic) to a glowing teal "unlocked" state (pro). The color change is
+// eased so the transition reads when the badge updates after step-up.
 function LevelBadge({ acr }: { acr?: string }) {
   const isPro = acr === "pro";
   return (
     <span
       className={
-        "rounded-full px-2.5 py-1 text-xs font-medium " +
-        (isPro ? "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200" : "bg-slate-100 text-slate-500")
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-xs font-medium transition-colors duration-500 " +
+        (isPro
+          ? "bg-accent/10 text-accent ring-1 ring-accent/40 shadow-[0_0_14px_-2px_rgba(53,224,200,0.55)]"
+          : "bg-white/5 text-muted ring-1 ring-hairline")
       }
       title={`assurance level (acr): ${acr ?? "unknown"}`}
     >
+      <span
+        className={
+          "h-1.5 w-1.5 rounded-full transition-colors duration-500 " +
+          (isPro ? "bg-accent" : "bg-muted")
+        }
+      />
       {acr ?? "—"}
     </span>
   );
@@ -298,11 +331,11 @@ function ServerDetailsPanel({ details }: { details: ServerDetails }) {
     ["Server time", new Date(details.serverTime).toLocaleString()],
   ];
   return (
-    <dl className="mt-3 divide-y divide-slate-100 rounded-xl border border-slate-100 bg-slate-50 px-4">
+    <dl className="mt-3 divide-y divide-hairline rounded-xl border border-hairline bg-white/[0.03] px-4">
       {rows.map(([label, value]) => (
         <div key={label} className="flex justify-between gap-3 py-2 text-sm">
-          <dt className="text-slate-500">{label}</dt>
-          <dd className="text-right font-medium text-slate-800">{value}</dd>
+          <dt className="text-muted">{label}</dt>
+          <dd className="text-right font-mono text-ink">{value}</dd>
         </div>
       ))}
     </dl>
@@ -321,9 +354,12 @@ function Centered({ children }: { children: React.ReactNode }) {
   return <main className="flex flex-1 items-center justify-center p-6">{children}</main>;
 }
 
+// Lit surface: translucent panel + backdrop blur over the glowing canvas, a
+// hairline border, and a 1px inset top highlight so it reads as a lit surface
+// rather than a flat box. Enters with a fade + rise.
 function Card({ children }: { children: React.ReactNode }) {
   return (
-    <div className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-lg shadow-slate-200/60 ring-1 ring-slate-100">
+    <div className="animate-card-in w-full max-w-sm rounded-2xl border border-hairline bg-surface/85 p-8 shadow-[0_24px_60px_-20px_rgba(0,0,0,0.7),inset_0_1px_0_0_rgba(255,255,255,0.06)] backdrop-blur-xl">
       {children}
     </div>
   );
@@ -332,10 +368,48 @@ function Card({ children }: { children: React.ReactNode }) {
 function Spinner() {
   return (
     <span
-      className="mx-auto block h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600"
+      className="mx-auto block h-6 w-6 animate-spin rounded-full border-2 border-white/15 border-t-accent"
       role="status"
       aria-label="loading"
     />
+  );
+}
+
+// Minimal shield-with-lock brand mark: gives the login card identity and nods at
+// the assurance concept without importing an icon set.
+function BrandMark() {
+  return (
+    <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-hairline bg-accent/10 text-accent shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]">
+      <svg viewBox="0 0 24 24" fill="none" className="h-5 w-5" aria-hidden="true">
+        <path
+          d="M12 2.5 5 5.2v5.6c0 4.3 2.9 8.1 7 9.2 4.1-1.1 7-4.9 7-9.2V5.2L12 2.5Z"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M9.6 11.2v-1.3a2.4 2.4 0 0 1 4.8 0v1.3"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+        />
+        <rect x="8.6" y="11.2" width="6.8" height="4.6" rx="1" fill="currentColor" />
+      </svg>
+    </span>
+  );
+}
+
+function LockGlyph({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <rect x="5" y="10.5" width="14" height="9" rx="2" fill="currentColor" />
+      <path
+        d="M8 10.5V8a4 4 0 0 1 8 0v2.5"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+      />
+    </svg>
   );
 }
 
