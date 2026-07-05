@@ -281,17 +281,35 @@ Then open **http://localhost:3000** and:
 1. The **login screen** shows a single **Log in** button.
 2. **Log in** redirects to Keycloak; sign in as `testuser` / `password`.
 3. You return to the **home screen**, which automatically calls `GET /hello` and
-   shows **"Hello World, testuser"**, with a **Log out** button.
+   shows **"Hello World, testuser"**, with a **Log out** button. A small badge
+   shows the current assurance level (`basic`).
+
+**Step-up (`GET /server-details`).** The home screen also has a **Load server
+details** button:
+
+4. Click **Load server details**. The browser calls `GET /server-details` with the
+   current (base) token and gets the `401` step-up challenge.
+5. The app reads the required level from the `WWW-Authenticate` header (allow-listed
+   against the known set before use), then re-authenticates via next-auth
+   requesting `acr=pro`. **Keycloak prompts for the OTP** (compute the current code
+   with `node scripts/totp.mjs`).
+6. After the OTP you are redirected back, the app **auto-retries once** (a one-shot,
+   time-bounded marker), the **server details render**, and the badge flips to
+   `pro`. Already-elevated sessions skip straight to the details.
+7. **Cancelling** the OTP shows an error **toast** and leaves the base session and
+   `/hello` intact.
 
 Any failure in the login/auth flow (a Keycloak error redirect, a token-refresh
-failure, or an unreachable API) is shown as a red **toast** in the top-right that
-auto-dismisses after 5 seconds; multiple errors stack.
+failure, an unreachable API, or a not-completed step-up) is shown as a red
+**toast** in the top-right that auto-dismisses after 5 seconds; multiple errors
+stack. Enforcement is entirely server-side; `session.acr` is only a UI hint (badge
+and skip-redundant-step-up), re-derived from the token on every refresh.
 
-To smoke-test the whole flow without a browser, run the headless E2E check (it
-logs in, establishes a session, and calls `/hello`):
+To smoke-test the flow without a browser, run the headless E2E checks:
 
 ```bash
-node scripts/e2e-login.mjs   # -> E2E PASSED: ... Hello World, testuser
+node scripts/e2e-login.mjs    # base login -> session (acr=basic) -> /hello
+node scripts/e2e-stepup.mjs   # step-up -> OTP -> session (acr=pro) -> /server-details 200
 ```
 
 ### Frontend development (outside Docker)

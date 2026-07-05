@@ -84,10 +84,11 @@ async function main() {
   const callback = await go(callbackUrl);
   if (callback.status !== 302) throw new Error(`callback did not redirect (HTTP ${callback.status})`);
 
-  // 6) Read the session (exposes accessToken via the session callback).
+  // 6) Read the session (exposes accessToken + acr via the session callback).
   const session = await (await go(`${FRONT}/api/auth/session`)).json();
   if (!session?.accessToken) throw new Error(`no session/accessToken: ${JSON.stringify(session)}`);
-  console.log("session.user:", JSON.stringify(session.user));
+  console.log("session.user:", JSON.stringify(session.user), "session.acr:", session.acr);
+  if (session.acr !== "basic") throw new Error(`expected base login session.acr=basic, got ${session.acr}`);
 
   // 7) Call the protected endpoint the way the browser does.
   const hello = await fetch(`${API}/hello`, {
