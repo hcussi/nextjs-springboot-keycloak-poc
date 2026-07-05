@@ -99,7 +99,24 @@ async function main() {
   if (hello.status !== 200 || text !== `Hello World, ${USERNAME}`) {
     throw new Error("unexpected /hello result");
   }
-  console.log(`\nE2E PASSED: login -> session -> ${text}`);
+
+  // 8) A base (acr=basic) session is not enough for /server-details: no token
+  //    yields an ordinary 401, a basic token yields the RFC 9470 step-up 401.
+  const noToken = await fetch(`${API}/server-details`);
+  console.log(`GET /server-details (no token) -> ${noToken.status}`);
+  if (noToken.status !== 401) throw new Error(`expected 401 without a token, got ${noToken.status}`);
+
+  const basic = await fetch(`${API}/server-details`, {
+    headers: { authorization: `Bearer ${session.accessToken}` },
+  });
+  const challenge = basic.headers.get("www-authenticate") ?? "";
+  console.log(`GET /server-details (basic token) -> ${basic.status}: ${challenge}`);
+  if (basic.status !== 401) throw new Error(`expected 401 step-up for a basic token, got ${basic.status}`);
+  if (!challenge.includes("insufficient_user_authentication") || !challenge.includes('acr_values="pro"')) {
+    throw new Error(`missing RFC 9470 step-up challenge in WWW-Authenticate: ${challenge}`);
+  }
+
+  console.log(`\nE2E PASSED: base login -> /hello 200; /server-details refused (401 + step-up challenge)`);
 }
 
 main().catch((err) => {
