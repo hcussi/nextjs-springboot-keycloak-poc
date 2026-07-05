@@ -8,6 +8,11 @@ A proof-of-concept OAuth2/OIDC integration: a Next.js frontend logs in through
 Keycloak and calls a protected Spring Boot endpoint that validates the JWT. See
 `PRD.md` (requirements) and `PLAN.md` (build order, all four steps done).
 
+Iteration 2 added **step-up authentication**: an elevated `GET /server-details`
+endpoint that requires `acr=pro` (a TOTP second factor on top of the base login),
+with an RFC 9470 challenge driving a transparent re-auth in the frontend. See
+`PRD-2.md` / `PLAN-2.md` (all four steps done).
+
 ## Commands
 
 Backend (`backend/`, Spring Boot 4 / Java 25 / Gradle wrapper):
@@ -38,6 +43,7 @@ node scripts/e2e-login.mjs           # base login -> session -> /hello smoke tes
 node scripts/e2e-stepup.mjs          # step-up: OTP -> session with acr=pro (testuser)
 node scripts/e2e-stepup-denied.mjs   # negative: basicuser (no factor) denied at acr=pro
 node scripts/e2e-stepup-bruteforce.mjs  # brute-force locks the OTP factor (bruteuser)
+node scripts/e2e-stepup-refresh.mjs  # refresh of an elevated session keeps acr=pro
 node scripts/totp.mjs                # current TOTP code for the step-up seed
 docker compose down                  # stop (realm re-imports on next up)
 ```
@@ -51,9 +57,9 @@ pre-commit gate would be flaky); treated as a required manual checklist instead:
    and reports findings by severity). Especially required when the change touches
    auth, tokens, the Keycloak realm/flows, secrets, or CORS.
 2. **Run the e2e suite green** against a running stack: `e2e-login.mjs`,
-   `e2e-stepup.mjs`, `e2e-stepup-denied.mjs`, and `e2e-stepup-bruteforce.mjs` must
-   all print `E2E PASSED`, and `cd backend && ./gradlew test` must pass. If the
-   realm changed, re-import first
+   `e2e-stepup.mjs`, `e2e-stepup-denied.mjs`, `e2e-stepup-bruteforce.mjs`, and
+   `e2e-stepup-refresh.mjs` must all print `E2E PASSED`, and
+   `cd backend && ./gradlew test` must pass. If the realm changed, re-import first
    (`docker compose up -d keycloak --force-recreate`) so the checks run against the
    committed file, not stale in-memory state.
 
@@ -75,7 +81,22 @@ pre-commit gate would be flaky); treated as a required manual checklist instead:
   a mocked `JwtDecoder` (fast, no Docker). `HelloControllerIntegrationTest` boots a
   real Keycloak via Testcontainers and runs the real auth-code flow
   (`KeycloakAuthCodeClient`). The realm file is copied onto the test classpath at
-  build time (one source of truth, no duplicate).
+  build time (one source of truth, no duplicate). The step-up tests mirror this
+  (`ServerDetailsControllerTest` / `ServerDetailsControllerIntegrationTest`, the
+  latter completing a real OTP to obtain a `pro` token).
+- **Step-up (`acr=pro`) enforcement.** A custom Keycloak `browser-stepup` flow
+  runs TOTP only when `acr=pro` is requested (LoA-2 condition with `max age 0`, so
+  it always re-challenges); `acr` rides on the access token via the built-in `acr`
+  client scope. The backend maps `acr` to an `ACR_<value>` authority and gates
+  `/server-details` on `ACR_pro` (required level is `app.security.stepup.acr`, not
+  hardcoded). A base token gets an RFC 9470 `401`
+  (`insufficient_user_authentication`, `acr_values="pro"`) via
+  `StepUpAccessDeniedHandler`, not a bare `403`; `WWW-Authenticate` is CORS-exposed
+  so the browser can read it. `session.acr` in the frontend is a UI hint only;
+  enforcement is server-side. The realm also disables self-service TOTP enrollment
+  (`CONFIGURE_TOTP` off) and enables brute-force protection, since the OTP now
+  gates the elevated level. Seed users: `testuser` (password + dev TOTP),
+  `basicuser` (password only), `bruteuser` (for the brute-force test).
 - **Gradle version catalog.** Dependency/plugin versions live in
   `backend/gradle/libs.versions.toml`; Spring artifacts are versionless (managed by
   the Boot BOM).

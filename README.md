@@ -12,9 +12,15 @@ Next.js app, receives a JWT access token, and uses it to call the protected
 Spring Boot endpoint, which validates the token against Keycloak (signature,
 issuer, expiry).
 
+A second iteration adds **step-up authentication**: an elevated
+`GET /server-details` endpoint that requires a TOTP second factor (`acr=pro`) on
+top of the base login. A base token is refused with an RFC 9470 challenge, and the
+frontend transparently re-authenticates at the higher level and retries.
+
 > **This is not a production system.** Secrets are local/dev-only and clearly
-> marked as such. See [`PRD.md`](PRD.md) for full requirements and
-> [`PLAN.md`](PLAN.md) for the implementation plan.
+> marked as such. See [`PRD.md`](PRD.md) / [`PLAN.md`](PLAN.md) for the base
+> iteration and [`PRD-2.md`](PRD-2.md) / [`PLAN-2.md`](PLAN-2.md) for the step-up
+> iteration.
 
 ## Architecture
 
@@ -68,10 +74,15 @@ before the frontend starts). Then open **http://localhost:3000**, click **Log in
 sign in as `testuser` / `password`, and the home screen shows
 **"Hello World, testuser"** fetched from the backend.
 
-To verify the whole flow without a browser:
+To verify the whole flow without a browser, run the headless e2e suite (each
+prints `E2E PASSED`):
 
 ```bash
-node scripts/e2e-login.mjs   # -> E2E PASSED: ... Hello World, testuser
+node scripts/e2e-login.mjs             # base login -> /hello; /server-details refused (401 + step-up challenge)
+node scripts/e2e-stepup.mjs            # step-up: OTP -> session acr=pro -> /server-details 200
+node scripts/e2e-stepup-denied.mjs     # basicuser (no factor) is denied at step-up, no token issued
+node scripts/e2e-stepup-bruteforce.mjs # brute-force locks the OTP factor at failureFactor
+node scripts/e2e-stepup-refresh.mjs    # a refreshed elevated session stays acr=pro
 ```
 
 The sections below document and verify each service individually.
