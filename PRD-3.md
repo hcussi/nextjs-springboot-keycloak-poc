@@ -283,17 +283,18 @@ No new runtime services. Net-new mechanics to validate during planning (consiste
 with the "version gotchas" caution, since this stack is newer than most training
 data):
 
-- **Keycloak is bumped 26.3 → 26.6, where DPoP is generally available.** DPoP was a
-  _preview_ feature in 26.3 (needed `--features=dpop`) and became a fully supported
-  feature in **26.4**, so on **26.6** no feature flag is required. Per-client
-  control is the **"Require DPoP bound tokens"** capability toggle
-  (`dpop.bound.access.tokens`); a realm-wide `dpop-bind-enforcer` client-policy
-  executor exists but is not needed here. Exact realm-export JSON shape is confirmed
-  in PLAN-3 against the Keycloak 26.6 docs. **The version bump is not free**: the
-  pinned image in `.env` (`KEYCLOAK_IMAGE`), the Testcontainers Keycloak used by the
-  backend integration tests, the e2e scripts, and the docs (`README.md`,
-  `CLAUDE.md`) all reference the current version and must be revisited and re-run
-  green as part of this iteration (tracked in §8.2 and PLAN-3).
+- **Keycloak has been bumped 26.3 → 26.6, where DPoP is generally available.** DPoP
+  was a _preview_ feature in 26.3 (needed `--features=dpop`) and became a fully
+  supported feature in **26.4**, so on **26.6** no feature flag is required:
+  enabling DPoP is purely the per-client **"Require DPoP bound tokens"** capability
+  toggle (`dpop.bound.access.tokens`). A realm-wide `dpop-bind-enforcer`
+  client-policy executor exists but is not needed here. Exact realm-export JSON
+  shape is confirmed in PLAN-3 against the Keycloak 26.6 docs. The bump itself is
+  **done**: the pinned image in `.env` (`KEYCLOAK_IMAGE`) and the Testcontainers
+  image in both backend integration tests are on 26.6, and the backend suite plus
+  all five e2e scripts were re-run green. The already-pinned
+  `testcontainers-keycloak 4.2.1` is the matrix-recommended library for Keycloak
+  26.6 (with Testcontainers core 2.0.x), so no dependency change was needed.
 - **Spring Security 7 (Spring Boot 4) resource-server DPoP.** Resource-server DPoP
   proof validation shipped in Spring Security 6.5 and is present in 7.x; it is
   enabled on the resource server (`oauth2ResourceServer(o -> o.jwt(...)` plus DPoP
@@ -322,12 +323,15 @@ data):
    app's server-side proxy route. The browser-held non-extractable-key + public
    client alternative is rejected (it would contradict the confidential-client
    architecture, CLAUDE.md / PRD.md §8.2).
-2. **Keycloak version: ✅ bump to 26.6 (DPoP GA, no preview flag).** This supersedes
-   the original "enable the preview feature" framing. The bump touches the pinned
-   image (`.env`), the Testcontainers-based backend integration tests, the e2e
-   scripts, and the docs (`README.md`, `CLAUDE.md`); **all tests are revisited and
-   re-run green, and the docs are updated** to 26.6 as part of this iteration
-   (PLAN-3 sequences this).
+2. **Keycloak version: ✅ bumped to 26.6 (DPoP GA, no preview flag) — done.** This
+   supersedes the original "enable the preview feature" framing: on 26.6 DPoP is a
+   generally available feature, enabled per client via the "Require DPoP bound
+   tokens" toggle rather than a server feature flag. The pinned image (`.env`) and
+   the Testcontainers image in both backend integration tests are on 26.6, the
+   backend suite and all five e2e scripts were re-run green, and no dependency
+   change was needed (`testcontainers-keycloak 4.2.1` already matches 26.6). The
+   remaining DPoP wiring (client toggle in the realm, frontend proofs, backend
+   validation) is sequenced in PLAN-3.
 3. **DPoP algorithm: ✅ ES256 (ECDSA P-256).**
 4. **DPoP nonce enforcement: ✅ do not mandate nonces.** Handle a server-issued
    `DPoP-Nonce` challenge reactively (retry once on `use_dpop_nonce`), but do not
@@ -339,12 +343,13 @@ data):
 
 ## 9. Next step
 
-On approval of this PRD, I will write **`PLAN-3.md`**: an ordered, verifiable
-implementation plan in the same incremental style as PLAN.md and PLAN-2.md,
-covering the Keycloak **26.6** bump and client DPoP toggle in the realm, the
-Next.js server-tier key-pair generation + proof signing + BFF proxy, backend
-resource-server DPoP validation preserving audience/step-up, revisiting and
-re-running all existing tests (backend `./gradlew test` + the e2e scripts) green,
-and updating the docs (`README.md`, `CLAUDE.md`).
+The Keycloak **26.6** bump (§8.2) is already done and verified green. On approval
+of this PRD, I will write **`PLAN-3.md`**: an ordered, verifiable implementation
+plan in the same incremental style as PLAN.md and PLAN-2.md, covering the client
+DPoP toggle in the realm, the Next.js server-tier key-pair generation + proof
+signing + BFF proxy, backend resource-server DPoP validation preserving
+audience/step-up, extending the tests (backend `./gradlew test` + the e2e scripts,
+including the negative replay case) and keeping them green, and updating the docs
+(`README.md`, `CLAUDE.md`).
 
 **No implementation will be done until PRD-3 and PLAN-3 are approved.**
