@@ -48,7 +48,7 @@ class ServerDetailsControllerIntegrationTest {
 
     @Container
     static final KeycloakContainer KEYCLOAK =
-        new KeycloakContainer("quay.io/keycloak/keycloak:26.3")
+        new KeycloakContainer("quay.io/keycloak/keycloak:26.6")
             .withRealmImportFile("keycloak/realm-export.json");
 
     @DynamicPropertySource
