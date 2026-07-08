@@ -262,14 +262,20 @@ docker compose up -d backend   # builds the image, waits for Keycloak to be heal
 
 ### Endpoint
 
-| Request                                        | Response |
-|------------------------------------------------|----------|
-| `GET /hello` with no token                     | `401 Unauthorized` |
-| `GET /hello` with an invalid/expired token     | `401 Unauthorized` |
-| `GET /hello` with a valid token                | `200` + `Hello World, <preferred_username>` |
-| `GET /server-details` with no/invalid token    | `401 Unauthorized` (ordinary bearer challenge) |
-| `GET /server-details` with a `basic` token     | `401` + `WWW-Authenticate: Bearer error="insufficient_user_authentication", acr_values="pro"` (RFC 9470 step-up) |
-| `GET /server-details` with a `pro` token       | `200` + JSON runtime details (app, version, JVM, uptime, profiles, hostname, time) |
+Tokens are now **DPoP-bound** (Iteration 3), so a protected call presents the
+token under the `DPoP` scheme with a fresh proof: `Authorization: DPoP <token>`
+plus a `DPoP: <proof>` header.
+
+| Request                                              | Response |
+|------------------------------------------------------|----------|
+| `GET /hello` with no token                           | `401 Unauthorized` |
+| `GET /hello` with an invalid/expired token           | `401 Unauthorized` |
+| `GET /hello` `DPoP` scheme + valid proof             | `200` + `Hello World, <preferred_username>` |
+| `GET /hello` with the bound token as **`Bearer`**    | `401` (RFC 9449 §7.1: a bound token can't be a bearer token) |
+| `GET /hello` `DPoP` scheme, missing/replayed proof   | `401` (proof required; a reused `jti` is rejected) |
+| `GET /server-details` with no/invalid token          | `401 Unauthorized` (ordinary challenge) |
+| `GET /server-details` `basic` token + valid proof    | `401` + `WWW-Authenticate: Bearer error="insufficient_user_authentication", acr_values="pro"` (RFC 9470 step-up) |
+| `GET /server-details` `pro` token + valid proof      | `200` + JSON runtime details (app, version, JVM, uptime, profiles, hostname, time) |
 
 `/server-details` maps the token's `acr` claim to an `ACR_<value>` authority and
 requires `ACR_pro` (the required level is `app.security.stepup.acr`, default
@@ -278,14 +284,30 @@ requires `ACR_pro` (the required level is `app.security.stepup.acr`, default
 via CORS so the browser `fetch` can read it. The payload carries no secrets,
 tokens, or environment dumps.
 
+**DPoP validation (Step 2).** Spring Security 7 auto-enables DPoP proof
+validation once `DPoPProofJwtDecoderFactory` is on the classpath: it verifies the
+proof (signature, `htm`/`htu`, `iat` freshness, `jti` replay via a built-in cache,
+`ath`, and the `cnf.jkt` thumbprint match) and decodes the access token through
+the *same* JWT authentication manager, so the existing issuer/audience and `acr`
+step-up checks still apply to `DPoP`-scheme requests. Two guards keep a bound
+token from being downgraded: the framework's own `BearerTokenAuthenticationFilter`
+rejects a `cnf`-bound token presented as plain `Bearer` (RFC 9449 §7.1), and
+`DpopBoundTokenValidator` additionally requires *every* accepted token to carry
+`cnf.jkt`, so an unbound token is refused under any scheme and the guarantee does
+not rest on Keycloak's client toggle alone. DPoP-proof failures are an
+authentication-time `401`; the step-up challenge is an authorization-time `401`,
+so the two never mask each other.
+
 ### Verify
 
 ```bash
 # No token -> 401
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/hello              # -> 401
 
-# With a token (grab one from `node scripts/auth-code-flow.mjs`, then:)
-curl -s http://localhost:8080/hello -H "Authorization: Bearer <access_token>"     # -> Hello World, testuser
+# A bare bearer token is now refused (tokens are DPoP-bound); a plain curl cannot
+# mint a proof, so use the scripts to exercise the DPoP path end to end:
+node scripts/dpop-verify.mjs   # Keycloak side: issues a bound token (cnf.jkt)
+cd backend && ./gradlew test   # backend side: real DPoP calls against /hello + /server-details
 ```
 
 ### Run the tests
@@ -299,16 +321,21 @@ Two layers run on JUnit 6 (requires JDK 25):
 - **Controller slice tests** (`HelloControllerTest`, `ServerDetailsControllerTest`):
   mock the JWT decoder, so they need no Docker or live Keycloak.
   `ServerDetailsControllerTest` covers `401` (no token), the `401` step-up
-  challenge for a `basic` token, and `200` + payload for a `pro` token.
+  challenge for a `basic` token, and `200` + payload for a `pro` token;
+  `HelloControllerTest` also asserts a `cnf`-bound token is refused under the
+  `Bearer` scheme.
 - **Integration tests** (`HelloControllerIntegrationTest`,
   `ServerDetailsControllerIntegrationTest`): start a real Keycloak via
   [Testcontainers](https://testcontainers.com/modules/keycloak/), import the same
-  `realm-export.json`, and obtain real tokens through the **Authorization Code +
-  PKCE** flow. The server-details test drives the real OTP second factor to get a
-  `pro` token (asserting `200`), confirms a `basic` token gets the step-up
-  challenge, and asserts `app.security.stepup.acr` is a key in the realm's
-  `acr.loa.map` (so a Keycloak rename fails the build rather than silently denying
-  all access). **Requires a running Docker engine.**
+  `realm-export.json`, and obtain real **DPoP-bound** tokens through the
+  **Authorization Code + PKCE** flow (signing proofs with `DpopProofs` /
+  `KeycloakAuthCodeClient`). They assert the happy DPoP path on `/hello` and
+  `/server-details`, plus the negatives: a bound token used as `Bearer`, a `DPoP`
+  request with no proof, and a replayed proof are each `401`. The server-details
+  test drives the real OTP second factor to get a `pro` token, confirms a `basic`
+  token still gets the step-up challenge, and asserts `app.security.stepup.acr` is
+  a key in the realm's `acr.loa.map` (so a Keycloak rename fails the build rather
+  than silently denying all access). **Requires a running Docker engine.**
 
 ## Running the frontend / full stack (Step 3)
 
