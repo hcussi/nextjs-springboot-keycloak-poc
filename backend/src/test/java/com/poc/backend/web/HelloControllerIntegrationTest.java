@@ -1,8 +1,10 @@
 package com.poc.backend.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.ArrayList;
@@ -64,19 +66,63 @@ class HelloControllerIntegrationTest {
             .andExpect(status().isUnauthorized());
     }
 
+    // MockMvc's default request URL (request.getRequestURL()), which the DPoP
+    // proof's `htu` must match.
+    private static final String HELLO_HTU = "http://localhost/hello";
+
     @Test
-    void returnsGreetingWithRealToken() throws Exception {
-        KeycloakAuthCodeClient auth = new KeycloakAuthCodeClient(
-            KEYCLOAK.getAuthServerUrl(), "web", CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
+    void returnsGreetingWithRealDpopToken() throws Exception {
+        KeycloakAuthCodeClient auth = auth();
         String token = auth.accessToken("testuser", "password");
 
         // The realm's audience mapper must put this client in `aud`, otherwise the
         // resource server's AudienceValidator would reject the token (see H-1).
         assertThat(audiencesOf(token)).contains("nextjs-frontend");
 
-        mockMvc.perform(get("/hello").header("Authorization", "Bearer " + token))
+        mockMvc.perform(get("/hello")
+                .header("Authorization", "DPoP " + token)
+                .header("DPoP", auth.resourceProof("GET", HELLO_HTU, token)))
             .andExpect(status().isOk())
             .andExpect(content().string("Hello World, testuser"));
+    }
+
+    @Test
+    void boundTokenRejectedUnderBearerScheme() throws Exception {
+        // RFC 9449 §7.1: a DPoP-bound token must not be usable as a bearer token.
+        // Enforced natively by Spring's BearerTokenAuthenticationFilter, which
+        // answers with an invalid_token bearer challenge.
+        String token = auth().accessToken("testuser", "password");
+
+        mockMvc.perform(get("/hello").header("Authorization", "Bearer " + token))
+            .andExpect(status().isUnauthorized())
+            .andExpect(header().string("WWW-Authenticate", containsString("invalid_token")));
+    }
+
+    @Test
+    void dpopSchemeWithoutProofRejected() throws Exception {
+        String token = auth().accessToken("testuser", "password");
+
+        mockMvc.perform(get("/hello").header("Authorization", "DPoP " + token))
+            .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void replayedProofRejected() throws Exception {
+        KeycloakAuthCodeClient auth = auth();
+        String token = auth.accessToken("testuser", "password");
+        String proof = auth.resourceProof("GET", HELLO_HTU, token);
+
+        // First use of the proof is accepted; replaying the same proof (same jti)
+        // is rejected by Spring's DPoP jti replay cache.
+        mockMvc.perform(get("/hello").header("Authorization", "DPoP " + token).header("DPoP", proof))
+            .andExpect(status().isOk());
+        mockMvc.perform(get("/hello").header("Authorization", "DPoP " + token).header("DPoP", proof))
+            .andExpect(status().isUnauthorized());
+    }
+
+    private static KeycloakAuthCodeClient auth() {
+        return new KeycloakAuthCodeClient(
+            KEYCLOAK.getAuthServerUrl(), "web", CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
     }
 
     private static List<String> audiencesOf(String jwt) throws Exception {

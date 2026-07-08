@@ -32,6 +32,25 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  * elevated level (default {@code acr=pro}). A valid but under-assured token is
  * refused with an RFC 9470 challenge (see {@link StepUpAccessDeniedHandler}),
  * not a bare 403. {@code /hello} keeps requiring only authentication.
+ *
+ * <p>DPoP (iteration 3): Keycloak issues sender-constrained (DPoP-bound) access
+ * tokens. Spring Security <em>auto-enables</em> DPoP proof validation for the
+ * {@code DPoP} authorization scheme whenever {@code DPoPProofJwtDecoderFactory}
+ * is on the classpath: the proof is checked (signature, {@code htm}/{@code htu},
+ * {@code iat} freshness, {@code jti} replay via a built-in cache, {@code ath}, and
+ * the {@code cnf.jkt} thumbprint match) and the access token is decoded through
+ * the <em>same</em> JWT authentication manager, so the issuer/audience checks and
+ * the acr step-up below still apply to DPoP-scheme requests. Two complementary
+ * guards ensure a bound token cannot be downgraded to a plain bearer token:
+ * <ul>
+ *   <li>the framework's own {@code BearerTokenAuthenticationFilter} already
+ *       rejects a {@code cnf}-bound token presented under the {@code Bearer}
+ *       scheme (RFC 9449 §7.1), so no custom filter is needed for that; and</li>
+ *   <li>{@link DpopBoundTokenValidator} (wired into the decoder below) requires
+ *       <em>every</em> accepted token to carry {@code cnf.jkt}, so an unbound
+ *       token is refused under any scheme and the guarantee does not rest on
+ *       Keycloak's client toggle alone.</li>
+ * </ul>
  */
 @Configuration
 @EnableWebSecurity
@@ -83,7 +102,9 @@ public class SecurityConfig {
     /**
      * Decoder that validates the standard claims (signature, issuer, expiry) and,
      * in addition, requires the access token's `aud` to include this API's
-     * audience, so tokens minted for other clients in the realm are rejected.
+     * audience (so tokens minted for other clients in the realm are rejected) and
+     * that the token is DPoP-bound ({@code cnf.jkt} present), so an unbound token
+     * is never accepted regardless of scheme (see {@link DpopBoundTokenValidator}).
      */
     @Bean
     JwtDecoder jwtDecoder(
@@ -92,7 +113,8 @@ public class SecurityConfig {
         NimbusJwtDecoder decoder = NimbusJwtDecoder.withIssuerLocation(issuerUri).build();
         decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
             JwtValidators.createDefaultWithIssuer(issuerUri),
-            new AudienceValidator(audience)));
+            new AudienceValidator(audience),
+            new DpopBoundTokenValidator()));
         return decoder;
     }
 

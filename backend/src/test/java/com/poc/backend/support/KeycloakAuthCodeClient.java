@@ -22,6 +22,7 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nimbusds.jose.jwk.ECKey;
 
 /**
  * Test helper that runs the OAuth2 Authorization Code flow (with PKCE) against a
@@ -30,10 +31,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * (reusing the session cookies), capture the redirect `code`, and exchange it
  * (plus the PKCE verifier and the confidential client secret) for tokens.
  *
+ * <p>The {@code nextjs-frontend} client now requires DPoP-bound tokens
+ * (RFC 9449), so the token request carries a DPoP proof signed with a per-instance
+ * ES256 key; the resulting access token is bound to that key's thumbprint
+ * ({@code cnf.jkt}). Callers reuse {@link #resourceProof} (same key) to build the
+ * proof for each protected resource call. Construct one client per DPoP session.
+ *
  * Cookies are tracked manually rather than via java.net.CookieManager, which
  * does not reliably resend Keycloak's session cookies for a `localhost` host.
- *
- * Reusable across integration tests; construct once per Keycloak/realm/client.
  */
 public class KeycloakAuthCodeClient {
 
@@ -45,6 +50,8 @@ public class KeycloakAuthCodeClient {
     private final String clientSecret;
     private final String redirectUri;
     private final ObjectMapper mapper = new ObjectMapper();
+    /** Per-session DPoP key; binds the issued token and signs every resource proof. */
+    private final ECKey dpopKey;
 
     /**
      * @param authServerUrl Keycloak base URL (e.g. {@code container.getAuthServerUrl()})
@@ -59,6 +66,16 @@ public class KeycloakAuthCodeClient {
         this.clientId = clientId;
         this.clientSecret = clientSecret;
         this.redirectUri = redirectUri;
+        try {
+            this.dpopKey = DpopProofs.generateKey();
+        } catch (Exception e) {
+            throw new IllegalStateException("could not generate a DPoP key", e);
+        }
+    }
+
+    /** Builds a DPoP proof for a protected resource call, bound to {@code accessToken}. */
+    public String resourceProof(String method, String url, String accessToken) throws Exception {
+        return DpopProofs.resourceProof(dpopKey, method, url, accessToken);
     }
 
     /** Logs the user in via the Authorization Code + PKCE flow and returns the access token (base level). */
@@ -127,22 +144,44 @@ public class KeycloakAuthCodeClient {
         }
         String code = queryParam(location, "code");
 
-        // 3) Exchange the code (+ PKCE verifier + client secret) for tokens.
+        // 3) Exchange the code (+ PKCE verifier + client secret) for tokens. The
+        //    client requires DPoP, so the request carries a DPoP proof.
         String tokenForm = "grant_type=authorization_code"
             + "&code=" + enc(code)
             + "&redirect_uri=" + enc(redirectUri)
             + "&client_id=" + clientId
             + "&client_secret=" + clientSecret
             + "&code_verifier=" + codeVerifier;
-        HttpResponse<String> tokenResponse = send(client, cookies,
-            HttpRequest.newBuilder(URI.create(realmUrl + "/protocol/openid-connect/token"))
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .POST(HttpRequest.BodyPublishers.ofString(tokenForm)));
+        HttpResponse<String> tokenResponse = postToken(client, cookies, tokenForm);
         var json = mapper.readTree(tokenResponse.body());
         if (!json.has("access_token")) {
             throw new IllegalStateException("No access_token in token response: " + snippet(tokenResponse.body()));
         }
         return json.get("access_token").asText();
+    }
+
+    /** POSTs to the token endpoint with a DPoP proof, retrying once on a nonce challenge. */
+    private HttpResponse<String> postToken(HttpClient client, Map<String, String> cookies, String tokenForm)
+            throws Exception {
+        String tokenEndpoint = realmUrl + "/protocol/openid-connect/token";
+        HttpResponse<String> response = sendToken(client, cookies, tokenEndpoint, tokenForm, null);
+        if (response.statusCode() == 400
+                && "use_dpop_nonce".equals(mapper.readTree(response.body()).path("error").asText())) {
+            String nonce = response.headers().firstValue("DPoP-Nonce").orElse(null);
+            if (nonce != null) {
+                response = sendToken(client, cookies, tokenEndpoint, tokenForm, nonce);
+            }
+        }
+        return response;
+    }
+
+    private HttpResponse<String> sendToken(HttpClient client, Map<String, String> cookies,
+                                           String tokenEndpoint, String tokenForm, String nonce) throws Exception {
+        return send(client, cookies,
+            HttpRequest.newBuilder(URI.create(tokenEndpoint))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("DPoP", DpopProofs.tokenProof(dpopKey, tokenEndpoint, nonce))
+                .POST(HttpRequest.BodyPublishers.ofString(tokenForm)));
     }
 
     /** Sends the request with the accumulated cookies, then records any Set-Cookie values. */

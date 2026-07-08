@@ -61,6 +61,9 @@ class ServerDetailsControllerIntegrationTest {
     @Autowired
     MockMvc mockMvc;
 
+    // MockMvc's default request URL, which the DPoP proof's `htu` must match.
+    private static final String HTU = "http://localhost/server-details";
+
     @Value("${app.security.stepup.acr}")
     String requiredAcr;
 
@@ -71,9 +74,14 @@ class ServerDetailsControllerIntegrationTest {
 
     @Test
     void basicTokenGetsStepUpChallenge() throws Exception {
-        String basic = auth().accessToken("testuser", "password"); // no acr -> acr=basic
+        // A valid DPoP proof but an under-assured (acr=basic) token: authentication
+        // succeeds, so the RFC 9470 step-up 401 must win over any DPoP error.
+        KeycloakAuthCodeClient auth = auth();
+        String basic = auth.accessToken("testuser", "password"); // no acr -> acr=basic
 
-        mockMvc.perform(get("/server-details").header("Authorization", "Bearer " + basic))
+        mockMvc.perform(get("/server-details")
+                .header("Authorization", "DPoP " + basic)
+                .header("DPoP", auth.resourceProof("GET", HTU, basic)))
             .andExpect(status().isUnauthorized())
             .andExpect(header().string("WWW-Authenticate", containsString("insufficient_user_authentication")))
             .andExpect(header().string("WWW-Authenticate", containsString("acr_values=\"pro\"")));
@@ -81,9 +89,12 @@ class ServerDetailsControllerIntegrationTest {
 
     @Test
     void proTokenReturnsServerDetails() throws Exception {
-        String pro = auth().accessToken("testuser", "password", "pro", TOTP_SECRET);
+        KeycloakAuthCodeClient auth = auth();
+        String pro = auth.accessToken("testuser", "password", "pro", TOTP_SECRET);
 
-        mockMvc.perform(get("/server-details").header("Authorization", "Bearer " + pro))
+        mockMvc.perform(get("/server-details")
+                .header("Authorization", "DPoP " + pro)
+                .header("DPoP", auth.resourceProof("GET", HTU, pro)))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.application").exists())
             .andExpect(jsonPath("$.javaVersion").exists())
