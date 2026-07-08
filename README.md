@@ -216,6 +216,39 @@ to compute the code:
 node scripts/e2e-stepup.mjs   # -> E2E PASSED: step-up login -> OTP -> session with acr=pro
 ```
 
+### DPoP sender-constrained tokens (Iteration 3, Step 1)
+
+A third iteration binds the access token to a key the client holds, so a stolen
+token is useless without the private key (**DPoP**, RFC 9449). See
+[`PRD-3.md`](PRD-3.md) / [`PLAN-3.md`](PLAN-3.md).
+
+Keycloak 26.6 ships DPoP as a generally available feature (no preview flag). The
+`nextjs-frontend` client now sets **`dpop.bound.access.tokens: "true"`**, so:
+
+- Every token request must carry a **DPoP proof** (a short-lived JWT signed with
+  the client's key, sent in the `DPoP` header) or Keycloak rejects it.
+- The issued access token carries a **`cnf.jkt`** claim equal to the SHA-256
+  thumbprint of the client's public key.
+- Being a **confidential** client, only the access token is DPoP-bound (the
+  refresh token is protected by the client secret), but the `refresh_token` grant
+  **still requires a proof** so the refreshed access token stays bound to the same
+  key (measured, not assumed).
+
+Only the Keycloak side lands in this step; the backend proof validation (Step 2)
+and the frontend key + BFF proxy (Step 3) follow. A scratch check proves the IdP
+behavior directly (no frontend needed), obtaining a bound token and asserting
+`cnf.jkt`:
+
+```bash
+docker compose up -d keycloak --force-recreate   # re-import the realm
+node scripts/dpop-verify.mjs                      # -> STEP 1 PASSED: cnf.jkt bound, unbound rejected
+```
+
+> Between this step and Step 3 the frontend and backend integration tests do not
+> yet speak DPoP, so `scripts/e2e-login.mjs` and `./gradlew test` are expected to
+> fail against the DPoP-requiring client until those steps land. This is the
+> planned incremental order, not a regression.
+
 ## Running the backend (Step 2)
 
 The backend is a Spring Boot 4 (Java 25) OAuth2 resource server exposing a base
