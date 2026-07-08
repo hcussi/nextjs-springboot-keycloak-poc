@@ -296,10 +296,13 @@ training data; confirm against shipped versions, do not assume):
   access and refresh tokens; the SPA's refresh call needs a proof. PKCE is mandatory
   (no secret). Confirm the exact `spa-frontend` realm-export JSON shape against
   Keycloak 26.6.
-- **OIDC in a plain SPA.** A **minimal hand-rolled PKCE** flow (§8.5), no OIDC
-  library, so the browser-signed DPoP proof is injected into the token/refresh
-  requests with full control; DPoP proof construction is custom regardless.
-  `oidc-client-ts` is the recorded fallback only if session bookkeeping grows.
+- **OIDC + DPoP library.** **`oidc-client-ts`** (§8.5): its `IndexedDbDPoPStore`
+  generates and stores the non-extractable ES256 key in IndexedDB and its
+  `dpopProof(url, user)` builds resource-request proofs, so the SPA gets the exact
+  browser-key model without hand-rolling crypto. Two items to verify against the
+  pinned version in the PLAN-5 spike: DPoP-bound **refresh** for a public client, and
+  the **`use_dpop_nonce` retry** on `/server-details`; `oidc-spa` (automatic nonce)
+  and `oauth4webapi` (native `DPoP-Nonce`) are the fallbacks if needed.
 - **Backend audience as a set.** Extending `AudienceValidator` / the config from a
   single audience to a set is a small change; confirm it keeps rejecting tokens whose
   `aud` matches none of the accepted values.
@@ -318,11 +321,26 @@ training data; confirm against shipped versions, do not assume):
    every token request and backend call.
 4. **Public client + direct backend calls (no BFF): ✅.** The SPA is a public OIDC
    client and calls the backend directly under the `DPoP` scheme.
-5. **OIDC plumbing: ✅ minimal hand-rolled PKCE.** No OIDC library: a small
-   PKCE + auth-code implementation, so the browser-signed DPoP proof can be injected
-   into the token request and refresh cleanly and the flow stays transparent. If
-   session/refresh bookkeeping later proves heavy, `oidc-client-ts` is the recorded
-   fallback, but the DPoP proof construction stays custom regardless.
+5. **OIDC + DPoP client library: ✅ `oidc-client-ts` (primary), evaluated against
+   the alternatives.** This supersedes the earlier "hand-rolled PKCE" note: rolling
+   our own re-implements exactly what a good library already does, and the subtle
+   parts (base64url, raw R‖S ES256, `htu` normalization, nonce retry, `ath`) are
+   precisely where hand-rolled crypto goes wrong.
+
+   | Option | DPoP + browser-key fit | Verdict |
+   |--------|------------------------|---------|
+   | **`oidc-client-ts`** (authts) | Native DPoP with an **`IndexedDbDPoPStore`** that generates and stores a **non-extractable** `CryptoKeyPair` in IndexedDB (exactly the PRD-5 key model, `extractable:false`), `bind_authorization_code` token binding, and `UserManager.dpopProof(url, user)` for resource-request proofs, on a mature PKCE/session/silent-renew base. | **Chosen.** Verifiably realizes the non-extractable IndexedDB key model (FR-S2 / NFR-15) without hand-rolling crypto; established, focused SPA OIDC library. |
+   | **`oidc-spa`** | Transparent `fetch`/`XHR` interceptors that auto-attach the proof and **handle `use_dpop_nonce` tracking/retry automatically** (closes gaps (a)/(b) below); framework-agnostic. But its docs do **not** confirm a non-extractable WebCrypto key in IndexedDB, and `mode:"auto"` falls back to Bearer when the RS lacks DPoP. | **Strong alternative.** If the PLAN-5 spike confirms non-extractable IndexedDB keys and a DPoP-required (non-fallback) mode, reconsider as primary, since it also solves nonce + refresh out of the box. |
+   | **`oauth4webapi`** (panva) | Low-level, browser-native, first-class DPoP with a `CryptoKeyPair` and built-in `DPoP-Nonce` handling, by the `jose`/`openid-client` author. More manual flow wiring. | **Fallback.** Best for maximal control, or if `oidc-client-ts`'s nonce/refresh handling proves insufficient. |
+   | **Keycloak JS adapter (`keycloak-js`)** | **No DPoP support** (keycloak/keycloak#30874 open); would force hand-rolling the whole DPoP layer anyway. | **Rejected.** |
+
+   Two gaps to close in the PLAN-5 spike, both because the docs are silent on them:
+   **(a) public-client refresh binding** (Keycloak binds the refresh token for public
+   clients, so the refresh request needs a proof; confirm `oidc-client-ts` signs it,
+   else wrap it), and **(b) the `use_dpop_nonce` retry** on `/server-details`
+   (iteration 4; confirm a nonce can be threaded through `dpopProof`, else add a
+   one-shot retry wrapper). If either is unpleasant, `oidc-spa` (automatic) or
+   `oauth4webapi` (native nonce) is the escape hatch.
 6. **Key lifetime: ✅ per-login.** The key is generated at login and cleared from
    IndexedDB on logout, so each login mints a fresh key and a freshly bound token;
    it survives reloads within a session but is not a persistent per-profile key.
@@ -338,8 +356,8 @@ training data; confirm against shipped versions, do not assume):
 
 On approval of this PRD, I will write **`PLAN-5.md`**: an ordered, verifiable
 implementation plan (the `spa-frontend` public Keycloak client; the Vite React app
-with WebCrypto/IndexedDB non-extractable key management and browser DPoP proof
-signing; the hand-rolled OIDC PKCE flow, step-up, nonce, and DPoP-bound refresh; the
+with `oidc-client-ts` non-extractable IndexedDB key management and browser DPoP
+proof signing (spiking refresh + nonce first, §8.5); step-up, nonce, and refresh; the
 backend audience-set and CORS changes; the compose SPA service; and the full
 Playwright e2e + README updates), in the same incremental style as the prior plans.
 
