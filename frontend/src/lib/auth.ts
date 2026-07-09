@@ -27,6 +27,21 @@ function acrOf(accessToken?: string): string | undefined {
 }
 
 /**
+ * Whether the access token is DPoP sender-constrained, i.e. carries a `cnf.jkt`
+ * confirmation claim (RFC 9449). Derived from the real token (not hardcoded), so it
+ * reflects the actual binding; UI hint only, like `acr`.
+ */
+function dpopBoundOf(accessToken?: string): boolean {
+  if (!accessToken) return false;
+  try {
+    const payload = JSON.parse(Buffer.from(accessToken.split(".")[1], "base64url").toString("utf8"));
+    return typeof payload?.cnf?.jkt === "string" && payload.cnf.jkt.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * POSTs to Keycloak's token endpoint with a DPoP proof, retrying once if Keycloak
  * answers with a `use_dpop_nonce` challenge. Used for the refresh grant (the
  * confidential client still needs a proof on refresh so the new access token stays
@@ -80,6 +95,7 @@ async function refreshAccessToken(token: JWT): Promise<JWT> {
       accessTokenExpires: Date.now() + refreshed.expires_in * 1000,
       refreshToken: refreshed.refresh_token ?? token.refreshToken,
       acr: acrOf(refreshed.access_token),
+      dpop: dpopBoundOf(refreshed.access_token),
       error: undefined,
     };
   } catch {
@@ -122,6 +138,7 @@ export const authOptions: NextAuthOptions = {
           : Date.now() + 300 * 1000;
         token.dpopKeyRef = account.dpopKeyRef as string | undefined;
         token.acr = acrOf(account.access_token);
+        token.dpop = dpopBoundOf(account.access_token);
         return token;
       }
       // Still valid (refresh 10s early to avoid edge races).
@@ -135,6 +152,7 @@ export const authOptions: NextAuthOptions = {
       // The access token is NOT exposed to the browser: it stays in the server-side
       // JWT and is used only by the /api/backend/* proxy routes. Only UI hints here.
       session.acr = token.acr;
+      session.dpop = token.dpop;
       session.error = token.error;
       return session;
     },

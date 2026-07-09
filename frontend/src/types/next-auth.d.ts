@@ -8,6 +8,8 @@ declare module "next-auth" {
     // attach the DPoP-bound token server-side. Only UI hints live here.
     // Assurance level from the access token (e.g. "basic" / "pro"). UI hint only.
     acr?: string;
+    // Whether the access token is DPoP sender-constrained (cnf.jkt present). UI hint only.
+    dpop?: boolean;
     error?: string;
   }
 }
@@ -21,6 +23,7 @@ declare module "next-auth/jwt" {
     // Opaque reference to the per-session DPoP key held in the server-side store.
     dpopKeyRef?: string;
     acr?: string;
+    dpop?: boolean;
     error?: string;
   }
 }
