@@ -34,16 +34,24 @@ public class ServerDetailsController {
     private final Environment environment;
     private final ObjectProvider<BuildProperties> buildProperties;
     private final RuntimeMXBean runtime = ManagementFactory.getRuntimeMXBean();
+    /** When true, emit non-secret request diagnostics at INFO (DEBUG env flag). */
+    private final boolean debug;
 
-    public ServerDetailsController(Environment environment, ObjectProvider<BuildProperties> buildProperties) {
+    public ServerDetailsController(Environment environment, ObjectProvider<BuildProperties> buildProperties,
+            @org.springframework.beans.factory.annotation.Value("${DEBUG:false}") boolean debug) {
         this.environment = environment;
         this.buildProperties = buildProperties;
+        this.debug = debug;
     }
 
     @GetMapping("/server-details")
     public ServerDetails serverDetails() {
         BuildProperties build = buildProperties.getIfAvailable();
         log.debug("GET /server-details served");
+        if (debug) {
+            // Reached only after the acr=pro step-up gate passed; safe to note.
+            log.info("[stepup-debug] GET /server-details served (elevated acr passed the step-up gate)");
+        }
         return new ServerDetails(
             environment.getProperty("spring.application.name", "backend"),
             build != null ? build.getVersion() : "dev",

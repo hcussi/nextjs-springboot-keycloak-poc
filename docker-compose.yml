@@ -45,6 +45,9 @@ services:
       # Issuer used to validate JWTs; reachable over the Docker network by
       # service name. Matches the realm issuer.
       KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
+      # Debug logging flag (off by default). When "true", the backend logs
+      # non-secret DPoP / step-up diagnostics at INFO. See README.
+      DEBUG: ${DEBUG:-false}
     ports:
       - "${BACKEND_PORT}:8080"
     depends_on:
@@ -74,6 +77,9 @@ services:
         # Browser-facing API base URL, inlined at build time. Kept for reference;
         # with the BFF proxy the browser calls same-origin /api/backend/* instead.
         NEXT_PUBLIC_API_URL: http://localhost:${BACKEND_PORT}
+        # Debug logging flag, inlined into the client bundle at build time. Off by
+        # default; set DEBUG=true and rebuild to also trace the flow in the browser.
+        NEXT_PUBLIC_DEBUG: ${DEBUG:-false}
     container_name: poc-frontend
     environment:
       # Server-side NextAuth config (read at runtime).
@@ -85,6 +91,9 @@ services:
       # Server-side backend URL the BFF proxy calls (Docker service name). The
       # browser never sees this; it only calls the same-origin proxy routes.
       BACKEND_URL: http://backend:8080
+      # Debug flag for the server + SSR runtimes (read at runtime). The client
+      # bundle reads the build-arg copy above; keep both in sync via DEBUG.
+      NEXT_PUBLIC_DEBUG: ${DEBUG:-false}
     ports:
       - "${FRONTEND_PORT}:3000"
     depends_on:

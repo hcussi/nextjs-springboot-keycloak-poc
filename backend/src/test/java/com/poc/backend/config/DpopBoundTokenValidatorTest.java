@@ -19,7 +19,7 @@ import org.springframework.security.oauth2.jwt.Jwt;
  */
 class DpopBoundTokenValidatorTest {
 
-    private final DpopBoundTokenValidator validator = new DpopBoundTokenValidator();
+    private final DpopBoundTokenValidator validator = new DpopBoundTokenValidator(false);
 
     @Test
     void acceptsTokenWithCnfJkt() {

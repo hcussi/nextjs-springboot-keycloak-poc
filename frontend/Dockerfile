@@ -12,6 +12,10 @@ COPY . .
 # backend at localhost:8080 (published port), so bake that in.
 ARG NEXT_PUBLIC_API_URL=http://localhost:8080
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+# Debug logging flag, inlined into the client bundle. Off by default; flip to
+# "true" at build time to trace the DPoP / step-up flow (server, SSR, and client).
+ARG NEXT_PUBLIC_DEBUG=false
+ENV NEXT_PUBLIC_DEBUG=${NEXT_PUBLIC_DEBUG}
 RUN npm run build
 
 FROM node:22-alpine AS runtime

@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "sonner";
 
+import { debug } from "@/lib/debug";
+
 import { Providers } from "./providers";
 import "./globals.css";
 
@@ -25,6 +27,8 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // Runs during server-side rendering; confirms the DEBUG flag reaches the SSR runtime.
+  debug("ssr", "rendering root layout");
   return (
     <html
       lang="en"

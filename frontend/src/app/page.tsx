@@ -4,6 +4,8 @@ import { getSession, signIn, signOut, useSession } from "next-auth/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { debug } from "@/lib/debug";
+
 const TOAST_DURATION = 5000;
 
 // Solid accent primary: keyline + subtle hover lift/press instead of a heavy drop
@@ -80,6 +82,7 @@ export default function Home() {
         const challenge = res.headers.get("WWW-Authenticate") ?? "";
         const isStepUp =
           res.status === 401 && challenge.includes("insufficient_user_authentication");
+        debug("page", "server-details response", { status: res.status, isStepUp, allowStepUp, challenge });
         if (isStepUp && allowStepUp) {
           const required = parseAcrValues(challenge);
           if (required && KNOWN_ACRS.includes(required)) {
@@ -113,6 +116,11 @@ export default function Home() {
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
+
+  // Reflect the session's assurance/DPoP hints as they change (login, step-up, refresh).
+  useEffect(() => {
+    debug("page", "session updated", { status, acr: session?.acr, dpop: session?.dpop, error: session?.error });
+  }, [status, session?.acr, session?.dpop, session?.error]);
 
   // Surface token-refresh failures (the 5-minute access token could not be renewed).
   useEffect(() => {
@@ -255,6 +263,7 @@ export default function Home() {
 // the compatibility hint. A one-shot marker lets us auto-retry the fetch on
 // return. This navigates the whole page away to Keycloak.
 function beginStepUp(acr: string) {
+  debug("page", `beginning step-up re-authentication`, { acr });
   try {
     sessionStorage.setItem(STEPUP_MARKER, String(Date.now()));
   } catch {
@@ -277,11 +286,14 @@ function beginStepUp(acr: string) {
 // DPoP refresh callback and rewrites the cookie) and retry once. A step-up 401 is
 // returned unchanged for the caller to drive the re-authentication.
 async function backendFetch(path: string): Promise<Response> {
+  debug("page", `backendFetch ${path}`);
   const res = await fetch(path);
   if (res.status === 401 && !isStepUpChallenge(res)) {
+    debug("page", `backendFetch ${path}: non-step-up 401, refreshing session and retrying once`);
     await getSession();
     return fetch(path);
   }
+  debug("page", `backendFetch ${path} -> ${res.status}`);
   return res;
 }
 
