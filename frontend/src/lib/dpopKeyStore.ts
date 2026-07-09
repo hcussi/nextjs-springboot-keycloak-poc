@@ -4,6 +4,8 @@ import type { KeyObject } from "node:crypto";
 import { randomUUID } from "node:crypto";
 import type { JWK } from "jose";
 
+import { debug } from "./debug";
+
 /**
  * Per-session DPoP key material, held only in the Next.js server process.
  */
@@ -28,15 +30,21 @@ const store: Map<string, DpopKey> =
 export function putDpopKey(key: DpopKey): string {
   const ref = randomUUID();
   store.set(ref, key);
+  debug("keystore", "stored DPoP key", { ref, size: store.size });
   return ref;
 }
 
 /** Resolve a reference back to its key, or undefined if not present (e.g. after a restart). */
 export function getDpopKey(ref: string | undefined): DpopKey | undefined {
-  return ref ? store.get(ref) : undefined;
+  const key = ref ? store.get(ref) : undefined;
+  debug("keystore", "resolved DPoP key", { ref: ref ?? "(none)", hit: Boolean(key), size: store.size });
+  return key;
 }
 
 /** Evict a key on logout so it does not outlive the session. */
 export function deleteDpopKey(ref: string | undefined): void {
-  if (ref) store.delete(ref);
+  if (ref) {
+    store.delete(ref);
+    debug("keystore", "evicted DPoP key", { ref, size: store.size });
+  }
 }

@@ -423,6 +423,49 @@ npm run dev                       # http://localhost:3000 (needs keycloak + back
   sent as a Bearer token to the backend. When the 5-minute token expires, a
   refresh callback silently renews it; if that fails, the UI shows an error toast.
 
+## Debug logging
+
+A single `DEBUG` flag (off by default) turns on verbose, non-secret tracing of
+the DPoP and step-up flow across the whole stack. It is a local developer aid,
+not an audit log, and it **never** prints access/refresh tokens, the DPoP private
+key, proof signatures, or the client secret; only material that is non-sensitive
+by design is emitted (selected JWT claims such as `acr`/`aud`/`sub`, the public
+`cnf.jkt` thumbprint, and a proof's `htm`/`htu`/`jti`/`iat` plus whether
+`ath`/`nonce` are present). Keep it off outside debugging.
+
+Enable it for the full Docker stack:
+
+```bash
+DEBUG=true docker compose up -d --build   # rebuild so the client bundle picks it up
+docker compose logs -f backend frontend   # watch [dpop-debug] / [stepup-debug] lines
+```
+
+Or per component during local development:
+
+```bash
+# Frontend (server, SSR, and browser). One flag reaches all three JS runtimes;
+# NEXT_PUBLIC_* is inlined at build time, so restart dev after changing it.
+cd frontend && NEXT_PUBLIC_DEBUG=true npm run dev
+
+# Backend (DPoP validation + step-up decisions), logged at INFO.
+cd backend && DEBUG=true ./gradlew bootRun
+```
+
+What each side logs:
+
+- **Backend** (`DEBUG`): `[dpop-debug]` when a token is accepted/rejected by the
+  DPoP-bound check (`cnf.jkt`, `acr`, `aud`, `sub`) and on each `/hello` hit;
+  `[stepup-debug]` when `/server-details` is challenged for a higher `acr` or
+  served after the step-up gate passes.
+- **Frontend** (`NEXT_PUBLIC_DEBUG`): `[dpop-debug][server|client][scope]` lines
+  covering the token exchange and refresh (`auth`), key store put/get/evict
+  (`keystore`), proof signing (`dpop`), the BFF proxy request/response and nonce
+  retries (`bff`), SSR render (`ssr`), and the browser fetch, step-up, and session
+  updates (`page`).
+
+In Docker the frontend's browser logging needs `--build` because the client value
+is inlined at build time; the server/SSR side also honors it at runtime.
+
 ## Security
 
 A `security-reviewer` subagent (`.claude/agents/`) audited the auth surface and

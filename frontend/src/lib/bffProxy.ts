@@ -3,6 +3,7 @@ import "server-only";
 import { getToken } from "next-auth/jwt";
 import type { NextRequest } from "next/server";
 
+import { debug, describeToken } from "./debug";
 import { signDpopProof } from "./dpop";
 import { getDpopKey } from "./dpopKeyStore";
 
@@ -28,7 +29,16 @@ export async function proxyToBackend(req: NextRequest, path: string): Promise<Re
   const accessToken = token?.accessToken;
   const key = getDpopKey(token?.dpopKeyRef);
 
+  debug("bff", `proxy ${path}`, {
+    hasToken: Boolean(accessToken),
+    hasKey: Boolean(key),
+    acr: token?.acr,
+    dpop: token?.dpop,
+    ...(accessToken ? describeToken(accessToken) : {}),
+  });
+
   if (!accessToken || !key) {
+    debug("bff", `proxy ${path}: no session token/key -> 401`);
     return new Response(null, { status: 401 });
   }
 
@@ -42,10 +52,16 @@ async function dpopBackendFetch(
   nonce?: string,
 ): Promise<Response> {
   const proof = await signDpopProof({ key, htm: "GET", htu: url, accessToken, nonce });
+  debug("bff", `-> backend GET ${url}`, { scheme: "DPoP", nonce: nonce ? "present" : "absent" });
   const backendResponse = await fetch(url, {
     method: "GET",
     headers: { Authorization: `DPoP ${accessToken}`, DPoP: proof },
     cache: "no-store",
+  });
+
+  debug("bff", `<- backend ${backendResponse.status} for GET ${url}`, {
+    wwwAuthenticate: backendResponse.headers.get("WWW-Authenticate") ?? "(none)",
+    dpopNonce: backendResponse.headers.get("DPoP-Nonce") ? "present" : "absent",
   });
 
   // Retry once if the backend demands a DPoP nonce (forward-compatible with the
@@ -54,6 +70,7 @@ async function dpopBackendFetch(
     const serverNonce = backendResponse.headers.get("DPoP-Nonce");
     const challenge = backendResponse.headers.get("WWW-Authenticate") ?? "";
     if (serverNonce && challenge.includes("use_dpop_nonce")) {
+      debug("bff", `retrying GET ${url} with DPoP nonce`);
       return dpopBackendFetch(url, accessToken, key, serverNonce);
     }
   }

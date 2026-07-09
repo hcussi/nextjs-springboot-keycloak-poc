@@ -5,6 +5,7 @@ import type { KeyObject } from "node:crypto";
 import { base64url, exportJWK, generateKeyPair, SignJWT } from "jose";
 import type { JWK } from "jose";
 
+import { debug, debugEnabled, describeProof } from "./debug";
 import type { DpopKey } from "./dpopKeyStore";
 
 /**
@@ -14,6 +15,7 @@ import type { DpopKey } from "./dpopKeyStore";
 export async function generateDpopKeyPair(): Promise<DpopKey> {
   const { privateKey, publicKey } = await generateKeyPair("ES256");
   const publicJwk = await exportJWK(publicKey);
+  debug("dpop", "generated ES256 DPoP key pair", { kty: publicJwk.kty, crv: publicJwk.crv });
   return { privateKey: privateKey as KeyObject, publicJwk };
 }
 
@@ -43,9 +45,13 @@ export async function signDpopProof(opts: {
   if (nonce) payload.nonce = nonce;
   if (accessToken) payload.ath = accessTokenHash(accessToken);
 
-  return new SignJWT(payload)
+  const proof = await new SignJWT(payload)
     .setProtectedHeader({ typ: "dpop+jwt", alg: "ES256", jwk: { kty, crv, x, y } as JWK })
     .setJti(randomUUID())
     .setIssuedAt()
     .sign(key.privateKey);
+  if (debugEnabled()) {
+    debug("dpop", "signed DPoP proof", describeProof(proof));
+  }
+  return proof;
 }

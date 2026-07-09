@@ -2,6 +2,7 @@ import type { NextAuthOptions } from "next-auth";
 import type { JWT } from "next-auth/jwt";
 import KeycloakProvider from "next-auth/providers/keycloak";
 
+import { debug, describeToken } from "@/lib/debug";
 import { generateDpopKeyPair, signDpopProof } from "@/lib/dpop";
 import { deleteDpopKey, getDpopKey, putDpopKey } from "@/lib/dpopKeyStore";
 
@@ -51,6 +52,10 @@ async function dpopTokenFetch(body: URLSearchParams, keyRef: string | undefined,
   const key = getDpopKey(keyRef);
   if (!key) throw new Error("Missing DPoP key for token request");
   const proof = await signDpopProof({ key, htm: "POST", htu: TOKEN_ENDPOINT, nonce });
+  debug("auth", "token endpoint request (DPoP)", {
+    grant: body.get("grant_type"),
+    nonce: nonce ? "present" : "absent",
+  });
   const response = await fetch(TOKEN_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", DPoP: proof },
@@ -60,6 +65,7 @@ async function dpopTokenFetch(body: URLSearchParams, keyRef: string | undefined,
     const serverNonce = response.headers.get("DPoP-Nonce");
     const cloned = await response.clone().json().catch(() => ({}));
     if (serverNonce && cloned.error === "use_dpop_nonce") {
+      debug("auth", "token endpoint asked for DPoP nonce; retrying once");
       return dpopTokenFetch(body, keyRef, serverNonce);
     }
   }
@@ -89,6 +95,7 @@ async function refreshAccessToken(token: JWT): Promise<JWT> {
     if (!response.ok) {
       throw refreshed;
     }
+    debug("auth", "access token refreshed", describeToken(refreshed.access_token));
     return {
       ...token,
       accessToken: refreshed.access_token,
@@ -99,6 +106,7 @@ async function refreshAccessToken(token: JWT): Promise<JWT> {
       error: undefined,
     };
   } catch {
+    debug("auth", "access token refresh FAILED");
     return { ...token, error: "RefreshAccessTokenError" };
   }
 }
@@ -122,6 +130,10 @@ export const authOptions: NextAuthOptions = {
             DPoP: key.privateKey,
           });
           const dpopKeyRef = putDpopKey(key);
+          debug("auth", "authorization-code token exchange (DPoP-bound)", {
+            dpopKeyRef,
+            ...describeToken(tokenSet.access_token),
+          });
           return { tokens: { ...tokenSet, dpopKeyRef } };
         },
       },
@@ -139,13 +151,16 @@ export const authOptions: NextAuthOptions = {
         token.dpopKeyRef = account.dpopKeyRef as string | undefined;
         token.acr = acrOf(account.access_token);
         token.dpop = dpopBoundOf(account.access_token);
+        debug("auth", "jwt callback: initial sign-in", { acr: token.acr, dpop: token.dpop });
         return token;
       }
       // Still valid (refresh 10s early to avoid edge races).
       if (token.accessTokenExpires && Date.now() < token.accessTokenExpires - 10_000) {
+        debug("auth", "jwt callback: token still valid", { acr: token.acr, dpop: token.dpop });
         return token;
       }
       // Expired: try to refresh (with a DPoP proof).
+      debug("auth", "jwt callback: token expired, refreshing");
       return refreshAccessToken(token);
     },
     async session({ session, token }) {
@@ -154,6 +169,11 @@ export const authOptions: NextAuthOptions = {
       session.acr = token.acr;
       session.dpop = token.dpop;
       session.error = token.error;
+      debug("auth", "session callback: exposing UI hints", {
+        acr: token.acr,
+        dpop: token.dpop,
+        error: token.error ?? "(none)",
+      });
       return session;
     },
   },
@@ -161,6 +181,7 @@ export const authOptions: NextAuthOptions = {
     // Back-channel logout plus DPoP-key eviction: ending the next-auth session also
     // ends the Keycloak SSO session and drops the per-session key from the store.
     async signOut({ token }) {
+      debug("auth", "signOut: evicting DPoP key and ending Keycloak session");
       deleteDpopKey(token.dpopKeyRef);
       if (!token?.refreshToken) return;
       try {

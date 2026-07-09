@@ -4,6 +4,8 @@ import { getSession, signIn, signOut, useSession } from "next-auth/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { debug } from "@/lib/debug";
+
 const TOAST_DURATION = 5000;
 
 // Solid accent primary: keyline + subtle hover lift/press instead of a heavy drop
@@ -54,11 +56,29 @@ export default function Home() {
   const [helloSettled, setHelloSettled] = useState(false);
   const [serverDetails, setServerDetails] = useState<ServerDetails | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
+  // Set when a dead-refresh sign-out returns us to the login screen, so the login
+  // card can explain why (a sonner toast is unreliable across the auth->unauth
+  // transition here, and this survives it because the component stays mounted).
+  const [sessionExpired, setSessionExpired] = useState(false);
   const refreshErrorShown = useRef(false);
 
   const acr = session?.acr;
   const dpop = session?.dpop;
   const helloLoading = status === "authenticated" && !helloSettled;
+
+  // The refresh token is dead (idle / SSO timeout). The next-auth session cookie
+  // can still be valid, so useSession would keep reporting "authenticated" and the
+  // card would linger with empty data behind endless 401s. Show a reason, then drop
+  // the stale session WITHOUT a full-page redirect (redirect: false), so the login
+  // card renders in place and the toast survives (a navigation would discard it).
+  // Idempotent so overlapping triggers (a failed fetch and the session-error
+  // effect) only fire once.
+  const handleSessionExpired = useCallback(() => {
+    if (refreshErrorShown.current) return;
+    refreshErrorShown.current = true;
+    setSessionExpired(true);
+    void signOut({ redirect: false });
+  }, []);
 
   // Fetch /server-details. `allowStepUp` gates whether a step-up challenge starts
   // a re-authentication: true for an explicit user action, false for the one-shot
@@ -80,6 +100,7 @@ export default function Home() {
         const challenge = res.headers.get("WWW-Authenticate") ?? "";
         const isStepUp =
           res.status === 401 && challenge.includes("insufficient_user_authentication");
+        debug("page", "server-details response", { status: res.status, isStepUp, allowStepUp, challenge });
         if (isStepUp && allowStepUp) {
           const required = parseAcrValues(challenge);
           if (required && KNOWN_ACRS.includes(required)) {
@@ -93,12 +114,16 @@ export default function Home() {
           toast.error(`Could not load server details (HTTP ${res.status}).`, { duration: TOAST_DURATION });
         }
       } catch (err) {
+        if (err instanceof SessionExpiredError) {
+          handleSessionExpired();
+          return;
+        }
         toast.error(`Could not reach the API: ${(err as Error).message}`, { duration: TOAST_DURATION });
       } finally {
         setDetailsLoading(false);
       }
     },
-    [],
+    [handleSessionExpired],
   );
 
   // Surface login errors that NextAuth reports via the ?error= callback redirect.
@@ -114,13 +139,19 @@ export default function Home() {
     }
   }, []);
 
-  // Surface token-refresh failures (the 5-minute access token could not be renewed).
+  // Reflect the session's assurance/DPoP hints as they change (login, step-up, refresh).
   useEffect(() => {
-    if (session?.error === "RefreshAccessTokenError" && !refreshErrorShown.current) {
-      refreshErrorShown.current = true;
-      toast.error("Your session expired. Please sign in again.", { duration: TOAST_DURATION });
+    debug("page", "session updated", { status, acr: session?.acr, dpop: session?.dpop, error: session?.error });
+  }, [status, session?.acr, session?.dpop, session?.error]);
+
+  // If next-auth's own refetch (e.g. on window focus) discovers the refresh token
+  // is dead, the session is tagged with this error even without a fetch of ours;
+  // return to the login screen so the card never lingers in a broken state.
+  useEffect(() => {
+    if (session?.error === "RefreshAccessTokenError") {
+      handleSessionExpired();
     }
-  }, [session?.error]);
+  }, [session?.error, handleSessionExpired]);
 
   // Once authenticated, automatically call the protected greeting endpoint via the
   // same-origin BFF proxy (which attaches the DPoP-bound token server-side).
@@ -136,7 +167,12 @@ export default function Home() {
         if (active) setGreeting(text);
       })
       .catch((err: Error) => {
-        if (active) toast.error(`Could not reach the API: ${err.message}`, { duration: TOAST_DURATION });
+        if (!active) return;
+        if (err instanceof SessionExpiredError) {
+          handleSessionExpired();
+          return;
+        }
+        toast.error(`Could not reach the API: ${err.message}`, { duration: TOAST_DURATION });
       })
       .finally(() => {
         if (active) setHelloSettled(true);
@@ -144,7 +180,7 @@ export default function Home() {
     return () => {
       active = false;
     };
-  }, [status]);
+  }, [status, handleSessionExpired]);
 
   // After a step-up redirect, retry the server-details fetch exactly once. The
   // marker is consumed (cleared) before the retry so it can't replay. The fetch
@@ -180,6 +216,14 @@ export default function Home() {
           <p className="mt-2 text-sm leading-relaxed text-muted">
             Sign in with Keycloak to access the protected greeting.
           </p>
+          {sessionExpired && (
+            <p
+              role="status"
+              className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-relaxed text-amber-300"
+            >
+              Your session expired due to inactivity. Please sign in again.
+            </p>
+          )}
           <button onClick={() => signIn("keycloak")} className={`mt-8 ${PRIMARY_BTN}`}>
             <LockGlyph className="h-4 w-4" />
             Continue with Keycloak
@@ -255,6 +299,7 @@ export default function Home() {
 // the compatibility hint. A one-shot marker lets us auto-retry the fetch on
 // return. This navigates the whole page away to Keycloak.
 function beginStepUp(acr: string) {
+  debug("page", `beginning step-up re-authentication`, { acr });
   try {
     sessionStorage.setItem(STEPUP_MARKER, String(Date.now()));
   } catch {
@@ -277,12 +322,31 @@ function beginStepUp(acr: string) {
 // DPoP refresh callback and rewrites the cookie) and retry once. A step-up 401 is
 // returned unchanged for the caller to drive the re-authentication.
 async function backendFetch(path: string): Promise<Response> {
+  debug("page", `backendFetch ${path}`);
   const res = await fetch(path);
   if (res.status === 401 && !isStepUpChallenge(res)) {
-    await getSession();
+    debug("page", `backendFetch ${path}: non-step-up 401, refreshing session and retrying once`);
+    const refreshed = await getSession();
+    // If the refresh token itself is dead (idle / SSO timeout), next-auth tags the
+    // session; retrying would only 401 again, so signal an expiry the caller turns
+    // into a clean return to the login screen instead of a raw 401 toast.
+    if (refreshed?.error === "RefreshAccessTokenError") {
+      debug("page", `backendFetch ${path}: session refresh failed (expired), signalling`);
+      throw new SessionExpiredError();
+    }
     return fetch(path);
   }
+  debug("page", `backendFetch ${path} -> ${res.status}`);
   return res;
+}
+
+// Thrown by backendFetch when the session's refresh token is dead: the caller
+// drives a return to the login screen rather than toasting a confusing raw 401.
+class SessionExpiredError extends Error {
+  constructor() {
+    super("Session expired");
+    this.name = "SessionExpiredError";
+  }
 }
 
 function isStepUpChallenge(res: Response): boolean {

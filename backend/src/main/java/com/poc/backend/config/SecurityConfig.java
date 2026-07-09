@@ -61,7 +61,8 @@ public class SecurityConfig {
 
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http,
-            @Value("${app.security.stepup.acr:pro}") String requiredAcrProperty) throws Exception {
+            @Value("${app.security.stepup.acr:pro}") String requiredAcrProperty,
+            @Value("${DEBUG:false}") boolean debug) throws Exception {
         // Trim so a stray-whitespace config value can't silently make the required
         // authority unmatchable (the endpoint would fail closed for everyone).
         String requiredAcr = requiredAcrProperty.strip();
@@ -74,7 +75,7 @@ public class SecurityConfig {
                 .anyRequest().authenticated())
             .oauth2ResourceServer(oauth2 -> oauth2
                 .jwt(jwt -> jwt.jwtAuthenticationConverter(acrAuthenticationConverter()))
-                .accessDeniedHandler(new StepUpAccessDeniedHandler(requiredAcr, stepUpAuthority)));
+                .accessDeniedHandler(new StepUpAccessDeniedHandler(requiredAcr, stepUpAuthority, debug)));
         return http.build();
     }
 
@@ -109,12 +110,13 @@ public class SecurityConfig {
     @Bean
     JwtDecoder jwtDecoder(
             @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}") String issuerUri,
-            @Value("${app.security.jwt.audience:nextjs-frontend}") String audience) {
+            @Value("${app.security.jwt.audience:nextjs-frontend}") String audience,
+            @Value("${DEBUG:false}") boolean debug) {
         NimbusJwtDecoder decoder = NimbusJwtDecoder.withIssuerLocation(issuerUri).build();
         decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
             JwtValidators.createDefaultWithIssuer(issuerUri),
             new AudienceValidator(audience),
-            new DpopBoundTokenValidator()));
+            new DpopBoundTokenValidator(debug)));
         return decoder;
     }
 

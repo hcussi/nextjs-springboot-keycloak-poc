@@ -2,6 +2,8 @@ package com.poc.backend.config;
 
 import java.io.IOException;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -28,24 +30,36 @@ import jakarta.servlet.http.HttpServletResponse;
  */
 public class StepUpAccessDeniedHandler implements AccessDeniedHandler {
 
+    private static final Logger log = LoggerFactory.getLogger(StepUpAccessDeniedHandler.class);
+
     private final String requiredAcr;
     private final String requiredAuthority;
+    /** When true, emit non-secret step-up diagnostics at INFO (DEBUG env flag). */
+    private final boolean debug;
 
-    public StepUpAccessDeniedHandler(String requiredAcr, String requiredAuthority) {
+    public StepUpAccessDeniedHandler(String requiredAcr, String requiredAuthority, boolean debug) {
         this.requiredAcr = requiredAcr;
         this.requiredAuthority = requiredAuthority;
+        this.debug = debug;
     }
 
     @Override
     public void handle(HttpServletRequest request, HttpServletResponse response,
                        AccessDeniedException accessDeniedException) throws IOException {
         if (lacksRequiredLevel()) {
+            if (debug) {
+                log.info("[stepup-debug] {} denied: insufficient assurance, challenging for acr_values=\"{}\"",
+                    request.getRequestURI(), requiredAcr);
+            }
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             response.setHeader("WWW-Authenticate",
                 "Bearer error=\"insufficient_user_authentication\", "
                 + "error_description=\"A higher authentication level is required\", "
                 + "acr_values=\"" + requiredAcr + "\"");
         } else {
+            if (debug) {
+                log.info("[stepup-debug] {} denied with 403 (non-acr authorization rule)", request.getRequestURI());
+            }
             response.sendError(HttpServletResponse.SC_FORBIDDEN);
         }
     }
