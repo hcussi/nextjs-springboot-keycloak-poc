@@ -71,7 +71,8 @@ services:
     build:
       context: ./frontend
       args:
-        # Browser-facing API base URL, inlined at build time.
+        # Browser-facing API base URL, inlined at build time. Kept for reference;
+        # with the BFF proxy the browser calls same-origin /api/backend/* instead.
         NEXT_PUBLIC_API_URL: http://localhost:${BACKEND_PORT}
     container_name: poc-frontend
     environment:
@@ -81,6 +82,9 @@ services:
       KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID}
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET}
       KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
+      # Server-side backend URL the BFF proxy calls (Docker service name). The
+      # browser never sees this; it only calls the same-origin proxy routes.
+      BACKEND_URL: http://backend:8080
     ports:
       - "${FRONTEND_PORT}:3000"
     depends_on:

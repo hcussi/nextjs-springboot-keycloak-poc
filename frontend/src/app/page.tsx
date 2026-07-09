@@ -4,7 +4,6 @@ import { signIn, signOut, useSession } from "next-auth/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 const TOAST_DURATION = 5000;
 
 // Solid accent primary: keyline + subtle hover lift/press instead of a heavy drop
@@ -49,18 +48,16 @@ type ServerDetails = {
 export default function Home() {
   const { data: session, status } = useSession();
   const [greeting, setGreeting] = useState<string | null>(null);
-  // The access token whose /hello request has settled (resolved or failed).
-  // Loading is derived from this rather than a setState in the effect, which
-  // avoids a synchronous setState during the effect (react-hooks/set-state-in-effect).
-  const [settledToken, setSettledToken] = useState<string | null>(null);
+  // Whether the initial /hello call has settled (resolved or failed). Loading is
+  // derived from this rather than a setState in the effect, which avoids a
+  // synchronous setState during the effect (react-hooks/set-state-in-effect).
+  const [helloSettled, setHelloSettled] = useState(false);
   const [serverDetails, setServerDetails] = useState<ServerDetails | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const refreshErrorShown = useRef(false);
 
-  const accessToken = session?.accessToken;
   const acr = session?.acr;
-  const helloLoading =
-    status === "authenticated" && !!accessToken && settledToken !== accessToken;
+  const helloLoading = status === "authenticated" && !helloSettled;
 
   // Fetch /server-details. `allowStepUp` gates whether a step-up challenge starts
   // a re-authentication: true for an explicit user action, false for the one-shot
@@ -68,12 +65,11 @@ export default function Home() {
   // bouncing the user through Keycloak again in a loop).
   const loadServerDetails = useCallback(
     async (allowStepUp: boolean) => {
-      if (!accessToken) return;
       setDetailsLoading(true);
       try {
-        const res = await fetch(`${API_URL}/server-details`, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
+        // Same-origin BFF proxy: the DPoP-bound token and proof are attached
+        // server-side, so no Authorization header is set here.
+        const res = await fetch("/api/backend/server-details");
         if (res.ok) {
           setServerDetails(await res.json());
           return;
@@ -100,7 +96,7 @@ export default function Home() {
         setDetailsLoading(false);
       }
     },
-    [accessToken],
+    [],
   );
 
   // Surface login errors that NextAuth reports via the ?error= callback redirect.
@@ -124,13 +120,12 @@ export default function Home() {
     }
   }, [session?.error]);
 
-  // Once authenticated, automatically call the protected greeting endpoint.
+  // Once authenticated, automatically call the protected greeting endpoint via the
+  // same-origin BFF proxy (which attaches the DPoP-bound token server-side).
   useEffect(() => {
-    if (status !== "authenticated" || !accessToken) return;
+    if (status !== "authenticated") return;
     let active = true;
-    fetch(`${API_URL}/hello`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    })
+    fetch("/api/backend/hello")
       .then(async (res) => {
         if (!res.ok) throw new Error(`API responded ${res.status}`);
         return res.text();
@@ -142,24 +137,24 @@ export default function Home() {
         if (active) toast.error(`Could not reach the API: ${err.message}`, { duration: TOAST_DURATION });
       })
       .finally(() => {
-        if (active) setSettledToken(accessToken);
+        if (active) setHelloSettled(true);
       });
     return () => {
       active = false;
     };
-  }, [status, accessToken]);
+  }, [status]);
 
   // After a step-up redirect, retry the server-details fetch exactly once. The
   // marker is consumed (cleared) before the retry so it can't replay. The fetch
   // is deferred to a microtask so its loading setState doesn't run synchronously
   // inside the effect.
   useEffect(() => {
-    if (status !== "authenticated" || !accessToken) return;
+    if (status !== "authenticated") return;
     const ts = consumeStepUpMarker();
     if (ts !== null && Date.now() - ts <= STEPUP_MARKER_TTL) {
       queueMicrotask(() => void loadServerDetails(false));
     }
-  }, [status, accessToken, loadServerDetails]);
+  }, [status, loadServerDetails]);
 
   if (status === "loading") {
     return (
