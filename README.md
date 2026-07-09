@@ -351,15 +351,24 @@ Then open **http://localhost:3000** and:
 
 1. The **login screen** shows a single **Log in** button.
 2. **Log in** redirects to Keycloak; sign in as `testuser` / `password`.
-3. You return to the **home screen**, which automatically calls `GET /hello` and
-   shows **"Hello World, testuser"**, with a **Log out** button. A small badge
-   shows the current assurance level (`basic`).
+3. You return to the **home screen**, which automatically calls the greeting
+   endpoint through a **same-origin BFF proxy** (`GET /api/backend/hello`) and shows
+   **"Hello World, testuser"**, with a **Log out** button. A small badge shows the
+   current assurance level (`basic`).
+
+**DPoP + BFF proxy (iteration 3).** The browser never holds the access token or the
+DPoP key. next-auth runs a **DPoP-bound** token exchange server-side (the access
+token is `cnf.jkt`-bound to a per-session ES256 key held in the Next.js server, not
+the browser), and the browser reaches the backend only through same-origin
+`/api/backend/*` routes that attach the token and a freshly signed DPoP proof
+server-side. `session` exposes only the `acr` UI hint, never the token.
 
 **Step-up (`GET /server-details`).** The home screen also has a **Load server
 details** button:
 
-4. Click **Load server details**. The browser calls `GET /server-details` with the
-   current (base) token and gets the `401` step-up challenge.
+4. Click **Load server details**. The browser calls `GET /api/backend/server-details`
+   (the proxy forwards it to the backend under DPoP), and the base (`acr=basic`)
+   session gets the `401` step-up challenge, relayed back through the proxy.
 5. The app reads the required level from the `WWW-Authenticate` header (allow-listed
    against the known set before use), then re-authenticates via next-auth
    requesting `acr=pro`. **Keycloak prompts for the OTP** (compute the current code
@@ -376,12 +385,16 @@ failure, an unreachable API, or a not-completed step-up) is shown as a red
 stack. Enforcement is entirely server-side; `session.acr` is only a UI hint (badge
 and skip-redundant-step-up), re-derived from the token on every refresh.
 
-To smoke-test the flow without a browser, run the headless E2E checks:
+To smoke-test the DPoP + BFF flow without a browser:
 
 ```bash
-node scripts/e2e-login.mjs    # base login -> session (acr=basic) -> /hello
-node scripts/e2e-stepup.mjs   # step-up -> OTP -> session (acr=pro) -> /server-details 200
+node scripts/dpop-bff-verify.mjs   # login -> no token in session -> /hello via BFF;
+                                    # step-up (OTP) -> pro -> /server-details 200 via BFF
 ```
+
+> The older `scripts/e2e-login.mjs` / `e2e-stepup*.mjs` read the access token from
+> the session and called the backend directly; with the token now server-side behind
+> the BFF proxy they are being migrated to the proxy + DPoP in Step 4.
 
 ### Frontend development (outside Docker)
 

@@ -1,10 +1,9 @@
 "use client";
 
-import { signIn, signOut, useSession } from "next-auth/react";
+import { getSession, signIn, signOut, useSession } from "next-auth/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 const TOAST_DURATION = 5000;
 
 // Solid accent primary: keyline + subtle hover lift/press instead of a heavy drop
@@ -49,18 +48,17 @@ type ServerDetails = {
 export default function Home() {
   const { data: session, status } = useSession();
   const [greeting, setGreeting] = useState<string | null>(null);
-  // The access token whose /hello request has settled (resolved or failed).
-  // Loading is derived from this rather than a setState in the effect, which
-  // avoids a synchronous setState during the effect (react-hooks/set-state-in-effect).
-  const [settledToken, setSettledToken] = useState<string | null>(null);
+  // Whether the initial /hello call has settled (resolved or failed). Loading is
+  // derived from this rather than a setState in the effect, which avoids a
+  // synchronous setState during the effect (react-hooks/set-state-in-effect).
+  const [helloSettled, setHelloSettled] = useState(false);
   const [serverDetails, setServerDetails] = useState<ServerDetails | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const refreshErrorShown = useRef(false);
 
-  const accessToken = session?.accessToken;
   const acr = session?.acr;
-  const helloLoading =
-    status === "authenticated" && !!accessToken && settledToken !== accessToken;
+  const dpop = session?.dpop;
+  const helloLoading = status === "authenticated" && !helloSettled;
 
   // Fetch /server-details. `allowStepUp` gates whether a step-up challenge starts
   // a re-authentication: true for an explicit user action, false for the one-shot
@@ -68,12 +66,12 @@ export default function Home() {
   // bouncing the user through Keycloak again in a loop).
   const loadServerDetails = useCallback(
     async (allowStepUp: boolean) => {
-      if (!accessToken) return;
       setDetailsLoading(true);
       try {
-        const res = await fetch(`${API_URL}/server-details`, {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        });
+        // Same-origin BFF proxy: the DPoP-bound token and proof are attached
+        // server-side, so no Authorization header is set here. backendFetch
+        // transparently refreshes an expired session and retries once.
+        const res = await backendFetch("/api/backend/server-details");
         if (res.ok) {
           setServerDetails(await res.json());
           return;
@@ -100,7 +98,7 @@ export default function Home() {
         setDetailsLoading(false);
       }
     },
-    [accessToken],
+    [],
   );
 
   // Surface login errors that NextAuth reports via the ?error= callback redirect.
@@ -124,13 +122,12 @@ export default function Home() {
     }
   }, [session?.error]);
 
-  // Once authenticated, automatically call the protected greeting endpoint.
+  // Once authenticated, automatically call the protected greeting endpoint via the
+  // same-origin BFF proxy (which attaches the DPoP-bound token server-side).
   useEffect(() => {
-    if (status !== "authenticated" || !accessToken) return;
+    if (status !== "authenticated") return;
     let active = true;
-    fetch(`${API_URL}/hello`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    })
+    backendFetch("/api/backend/hello")
       .then(async (res) => {
         if (!res.ok) throw new Error(`API responded ${res.status}`);
         return res.text();
@@ -142,24 +139,24 @@ export default function Home() {
         if (active) toast.error(`Could not reach the API: ${err.message}`, { duration: TOAST_DURATION });
       })
       .finally(() => {
-        if (active) setSettledToken(accessToken);
+        if (active) setHelloSettled(true);
       });
     return () => {
       active = false;
     };
-  }, [status, accessToken]);
+  }, [status]);
 
   // After a step-up redirect, retry the server-details fetch exactly once. The
   // marker is consumed (cleared) before the retry so it can't replay. The fetch
   // is deferred to a microtask so its loading setState doesn't run synchronously
   // inside the effect.
   useEffect(() => {
-    if (status !== "authenticated" || !accessToken) return;
+    if (status !== "authenticated") return;
     const ts = consumeStepUpMarker();
     if (ts !== null && Date.now() - ts <= STEPUP_MARKER_TTL) {
       queueMicrotask(() => void loadServerDetails(false));
     }
-  }, [status, accessToken, loadServerDetails]);
+  }, [status, loadServerDetails]);
 
   if (status === "loading") {
     return (
@@ -207,7 +204,10 @@ export default function Home() {
             <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted">Signed in as</p>
             <p className="mt-1 text-lg font-medium text-ink">{displayName}</p>
           </div>
-          <LevelBadge acr={acr} />
+          <div className="flex flex-col items-end gap-1.5">
+            <LevelBadge acr={acr} />
+            <DpopBadge enabled={dpop} />
+          </div>
         </div>
 
         <div className="mt-6 rounded-xl border border-hairline bg-white/[0.03] px-4 py-6 text-center">
@@ -270,6 +270,25 @@ function beginStepUp(acr: string) {
   );
 }
 
+// Calls a same-origin BFF proxy route. The proxy uses the access token from the
+// session cookie as-is (getToken does not refresh it), so once the 5-minute token
+// expires the backend answers 401 with an invalid_token challenge. On any 401 that
+// is NOT a step-up challenge, force a next-auth session refresh (which runs the
+// DPoP refresh callback and rewrites the cookie) and retry once. A step-up 401 is
+// returned unchanged for the caller to drive the re-authentication.
+async function backendFetch(path: string): Promise<Response> {
+  const res = await fetch(path);
+  if (res.status === 401 && !isStepUpChallenge(res)) {
+    await getSession();
+    return fetch(path);
+  }
+  return res;
+}
+
+function isStepUpChallenge(res: Response): boolean {
+  return (res.headers.get("WWW-Authenticate") ?? "").includes("insufficient_user_authentication");
+}
+
 function parseAcrValues(challenge: string): string | null {
   return challenge.match(/acr_values="?([^",\s]+)"?/i)?.[1] ?? null;
 }
@@ -318,6 +337,52 @@ function LevelBadge({ acr }: { acr?: string }) {
       />
       {acr ?? "—"}
     </span>
+  );
+}
+
+// Companion to LevelBadge: shows that the session's access token is DPoP
+// sender-constrained (cnf.jkt present). Reflects the real token binding surfaced
+// via session.dpop, not a hardcoded flag. Falls back to a quiet "bearer" pill if
+// the token is ever unbound, mirroring the basic/pro visual language.
+function DpopBadge({ enabled }: { enabled?: boolean }) {
+  return (
+    <span
+      className={
+        "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-xs font-medium transition-colors duration-500 " +
+        (enabled
+          ? "bg-accent/10 text-accent ring-1 ring-accent/40 shadow-[0_0_14px_-2px_rgba(53,224,200,0.55)]"
+          : "bg-white/5 text-muted ring-1 ring-hairline")
+      }
+      title={
+        enabled
+          ? "Access token is DPoP sender-constrained (RFC 9449): bound to a key held server-side"
+          : "Bearer token (not sender-constrained)"
+      }
+    >
+      <ShieldGlyph className="h-3 w-3" />
+      {enabled ? "DPoP" : "bearer"}
+    </span>
+  );
+}
+
+// Small shield-check mark for the DPoP badge.
+function ShieldGlyph({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path
+        d="M12 2.5 5 5.2v5.6c0 4.3 2.9 8.1 7 9.2 4.1-1.1 7-4.9 7-9.2V5.2L12 2.5Z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+      <path
+        d="m9 11.6 2.1 2.1L15 9.9"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
