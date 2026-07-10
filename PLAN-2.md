@@ -1,6 +1,6 @@
 # PLAN (Iteration 2): Step-Up Authentication for `/server-details`
 
-**Status:** Draft, for review
+**Status:** Implemented (all four steps done)
 **Companion to:** [PRD-2.md](PRD-2.md)
 **Builds on:** [PLAN.md](PLAN.md) (iteration 1, complete)
 **Date:** 2026-07-01
@@ -11,9 +11,8 @@ decisions (PRD-2 §8): elevated factor = **TOTP**, ACR levels = **`basic`** (LoA
 / **`pro`** (LoA 2) mapped via `acr.loa.map`, and **full headless e2e coverage**
 (the script computes the TOTP).
 
-> No code is written yet. Implementation begins only after this plan is approved,
-> and proceeds Step 1 → Step 4, verifying at each step. Iteration-1 behavior must
-> keep passing throughout (PRD-2 NFR-5).
+> Implementation proceeded Step 1 → Step 4, verifying at each step; all four steps
+> are now complete. Iteration-1 behavior kept passing throughout (PRD-2 NFR-5).
 
 ---
 
@@ -368,19 +367,19 @@ steps beyond the one-time `/etc/hosts` entry. `./gradlew test` green.
 
 ## 6. Deliverables checklist
 
-- [ ] `keycloak/realm-export.json`: `acr.loa.map`, OTP policy, `browser-stepup`
+- [x] `keycloak/realm-export.json`: `acr.loa.map`, OTP policy, `browser-stepup`
       flow (+ Condition-LoA config), seed `testuser` TOTP credential, protocol
       mapper/scope putting `acr` on the **access** token
-- [ ] `backend/` `GET /server-details` + DTO
-- [ ] `backend/` acr enforcement (required `acr` externalized as config, not
+- [x] `backend/` `GET /server-details` + DTO
+- [x] `backend/` acr enforcement (required `acr` externalized as config, not
       hardcoded) + RFC 9470 `StepUpAccessDeniedHandler` + CORS exposed
       `WWW-Authenticate`
-- [ ] `backend/` `ServerDetailsControllerTest` (no token / basic → 401 challenge /
+- [x] `backend/` `ServerDetailsControllerTest` (no token / basic → 401 challenge /
       pro → 200); integration test asserting config `acr` matches realm `acr.loa.map`
-- [ ] `frontend/` server-details UI + step-up (allow-listed acr, one-shot retry
+- [x] `frontend/` server-details UI + step-up (allow-listed acr, one-shot retry
       marker) + auto-retry + error toasts; `acr` derived fresh per `jwt` pass
-- [ ] `scripts/e2e-login.mjs` extended with TOTP + full step-up + refresh-acr assertion
-- [ ] `README.md` (step-up section, **distinct loud TOTP-seed warning**, endpoint
+- [x] `scripts/e2e-login.mjs` extended with TOTP + full step-up + refresh-acr assertion
+- [x] `README.md` (step-up section, **distinct loud TOTP-seed warning**, endpoint
       table) + `CLAUDE.md` iteration pointer
 
 ---

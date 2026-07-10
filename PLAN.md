@@ -1,6 +1,6 @@
 # PLAN: Next.js + Spring Boot + Keycloak OAuth2 POC
 
-**Status:** Draft, for review
+**Status:** Implemented (all four steps done)
 **Companion to:** [PRD.md](PRD.md)
 **Date:** 2026-06-19
 
@@ -11,8 +11,8 @@ confidential Keycloak client and a **Tailwind CSS** (minimalist, Material-style)
 UI, **Keycloak 26** in dev mode, issuer standardized on the **`keycloak`**
 container hostname, ports **3000 / 8080 / 8081**.
 
-> No code is written yet. This document defines *what* will be built and *in what
-> order*. Implementation begins only after this plan is approved.
+> Implementation proceeded in the ordered steps below, verifying at each; all four
+> steps are now complete.
 
 ---
 

@@ -13,6 +13,13 @@ endpoint that requires `acr=pro` (a TOTP second factor on top of the base login)
 with an RFC 9470 challenge driving a transparent re-auth in the frontend. See
 `PRD-2.md` / `PLAN-2.md` (all four steps done).
 
+Iteration 3 added **DPoP sender-constrained access tokens** (RFC 9449): Keycloak
+26.6 binds the access token to a per-session ES256 key (`cnf.jkt`), the backend
+validates a DPoP proof on every resource call, and the browser reaches the backend
+only through a same-origin BFF proxy that signs the proof server-side (the token
+and key never leave the Next.js tier). See `PRD-3.md` / `PLAN-3.md` (all four steps
+done).
+
 ## Commands
 
 Backend (`backend/`, Spring Boot 4 / Java 25 / Gradle wrapper):
@@ -39,14 +46,20 @@ Full stack and end-to-end check:
 
 ```bash
 docker compose up -d --build         # Keycloak + backend + frontend, health-gated startup
-node scripts/e2e-login.mjs           # base login -> session -> /hello smoke test
-node scripts/e2e-stepup.mjs          # step-up: OTP -> session with acr=pro (testuser)
+node scripts/e2e-login.mjs           # DPoP login -> /hello 200 + negatives (no-proof/wrong-key/Bearer/replay = 401)
+node scripts/e2e-stepup.mjs          # step-up: OTP -> acr=pro + cnf.jkt -> /server-details 200 (testuser)
 node scripts/e2e-stepup-denied.mjs   # negative: basicuser (no factor) denied at acr=pro
 node scripts/e2e-stepup-bruteforce.mjs  # brute-force locks the OTP factor (bruteuser)
-node scripts/e2e-stepup-refresh.mjs  # refresh of an elevated session keeps acr=pro
+node scripts/e2e-stepup-refresh.mjs  # refresh keeps acr=pro and a stable cnf.jkt binding
+node scripts/dpop-bff-verify.mjs     # browser path: login -> BFF proxy -> /hello, no token in browser
 node scripts/totp.mjs                # current TOTP code for the step-up seed
 docker compose down                  # stop (realm re-imports on next up)
 ```
+
+Every e2e script above drives the real DPoP flow (obtains a `cnf.jkt`-bound token
+and calls the backend under the `DPoP` scheme with a fresh proof); `e2e-login`
+additionally asserts the leaked-token negatives, and `dpop-bff-verify` covers the
+same-origin BFF proxy path the browser actually uses.
 
 ## Before committing
 
@@ -97,6 +110,29 @@ pre-commit gate would be flaky); treated as a required manual checklist instead:
   (`CONFIGURE_TOTP` off) and enables brute-force protection, since the OTP now
   gates the elevated level. Seed users: `testuser` (password + dev TOTP),
   `basicuser` (password only), `bruteuser` (for the brute-force test).
+- **DPoP (`cnf.jkt`) sender-constraint.** Keycloak 26.6 (DPoP GA, no preview flag)
+  binds the access token to a per-session ES256 key via the `nextjs-frontend`
+  client attribute `dpop.bound.access.tokens=true`; the token carries `cnf.jkt` =
+  the JWK thumbprint. The **same key signs both proof sites**: the token-endpoint
+  proof (`htm=POST`, `htu`=token endpoint, no `ath`) and every resource proof
+  (`htm`/`htu` of the backend call + `ath`=SHA-256 of the access token). Spring
+  Security 7 **auto-enables** DPoP proof validation once `DPoPProofJwtDecoderFactory`
+  is on the classpath (checks signature, `htm`/`htu`, `iat` window, `jti` replay via
+  a built-in cache, `ath`, and the `cnf.jkt` match), decoding through the *same* JWT
+  manager so the audience + acr checks still apply. A `cnf`-bound token can't be
+  downgraded: the framework's `BearerTokenAuthenticationFilter` refuses it under
+  `Bearer` (RFC 9449 §7.1), and `DpopBoundTokenValidator` refuses any token *lacking*
+  `cnf.jkt` under any scheme, so the guarantee doesn't rest on the Keycloak toggle
+  alone. The key lives **only in the Next.js server tier** (an in-memory key store
+  keyed by an opaque ref that rides in the JWE cookie, never the raw key; see
+  `frontend/src/lib/dpop.ts`, `dpopKeyStore.ts`, `bffProxy.ts`); the browser holds
+  neither token nor key and reaches the backend only through the same-origin
+  `/api/backend/*` BFF proxy, which signs the proof and relays the RFC 9470 step-up
+  `401` unchanged. Nonces are handled reactively (retry once on `use_dpop_nonce`) but
+  not mandated. Confidential-client nuance: the refresh-token grant still needs a
+  proof so the refreshed access token keeps a stable `cnf.jkt`. The e2e scripts
+  (`scripts/lib/dpop.mjs` + `node:crypto`) and the backend tests (`DpopProofs`,
+  `KeycloakAuthCodeClient`) exercise all of this, including the leaked-token negatives.
 - **Gradle version catalog.** Dependency/plugin versions live in
   `backend/gradle/libs.versions.toml`; Spring artifacts are versionless (managed by
   the Boot BOM).

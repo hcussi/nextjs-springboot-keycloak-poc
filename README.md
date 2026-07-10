@@ -17,9 +17,16 @@ A second iteration adds **step-up authentication**: an elevated
 top of the base login. A base token is refused with an RFC 9470 challenge, and the
 frontend transparently re-authenticates at the higher level and retries.
 
+A third iteration adds **DPoP sender-constrained tokens** (RFC 9449): the access
+token is cryptographically bound (`cnf.jkt`) to a per-session key the Next.js
+server holds, so a leaked token is useless without the key. The browser no longer
+holds the token at all: it reaches the backend only through a same-origin **BFF
+proxy** that signs a fresh DPoP proof server-side.
+
 > **This is not a production system.** Secrets are local/dev-only and clearly
 > marked as such. See [`PRD.md`](PRD.md) / [`PLAN.md`](PLAN.md) for the base
-> iteration and [`PRD-2.md`](PRD-2.md) / [`PLAN-2.md`](PLAN-2.md) for the step-up
+> iteration, [`PRD-2.md`](PRD-2.md) / [`PLAN-2.md`](PLAN-2.md) for the step-up
+> iteration, and [`PRD-3.md`](PRD-3.md) / [`PLAN-3.md`](PLAN-3.md) for the DPoP
 > iteration.
 
 ## Architecture
@@ -31,18 +38,19 @@ frontend transparently re-authenticates at the higher level and retries.
   │   :3000      │ ◄──────────────────────────── │   "web"      │
   │              │   3. Auth code → JWT tokens    │   :8081      │
   └──────┬───────┘                                └──────────────┘
-         │  4. GET /hello with Bearer JWT (held in memory)
-         ▼
-  ┌──────────────┐   5. Validate JWT via JWKS    ┌──────────────┐
+         │  4. Browser -> same-origin BFF proxy -> backend, GET /hello under
+         │     "Authorization: DPoP <token>" + a server-signed DPoP proof.
+         ▼     (Token + key stay in the Next.js server; never in the browser.)
+  ┌──────────────┐   5. Validate JWT via JWKS +  ┌──────────────┐
   │ Spring Boot  │ ─────── issuer / JWKS ───────► │   Keycloak   │
   │  (backend)   │ ◄──────────────────────────── │   (JWKS)     │
-  │   :8080      │   6. 200 "Hello World, <user>" └──────────────┘
-  └──────────────┘
+  │   :8080      │   6. Check DPoP proof vs cnf.jkt, then 200      │
+  └──────────────┘      "Hello World, <user>"    └──────────────┘
 ```
 
 | Component | Technology                      | Host port | Status            |
 |-----------|---------------------------------|-----------|-------------------|
-| Keycloak  | Keycloak 26 (dev mode)          | 8081      | ✅ Implemented (Step 1) |
+| Keycloak  | Keycloak 26.6 (dev mode, DPoP GA) | 8081    | ✅ Implemented (Step 1) |
 | Backend   | Spring Boot 4.0 (Java 25)       | 8080      | ✅ Implemented (Step 2) |
 | Frontend  | Next.js 16 + next-auth v4 + Tailwind | 3000 | ✅ Implemented (Step 3) |
 
@@ -75,15 +83,22 @@ sign in as `testuser` / `password`, and the home screen shows
 **"Hello World, testuser"** fetched from the backend.
 
 To verify the whole flow without a browser, run the headless e2e suite (each
-prints `E2E PASSED`):
+prints `E2E PASSED`). Every script drives the real DPoP flow: it obtains a
+`cnf.jkt`-bound token and calls the backend under the `DPoP` scheme with a
+freshly signed proof.
 
 ```bash
-node scripts/e2e-login.mjs             # base login -> /hello; /server-details refused (401 + step-up challenge)
-node scripts/e2e-stepup.mjs            # step-up: OTP -> session acr=pro -> /server-details 200
-node scripts/e2e-stepup-denied.mjs     # basicuser (no factor) is denied at step-up, no token issued
+node scripts/e2e-login.mjs             # DPoP-bound login -> /hello 200; a leaked token is refused
+                                       #   (no-proof / wrong-key / Bearer / replayed-jti all 401);
+                                       #   /server-details refused (RFC 9470 step-up 401)
+node scripts/e2e-stepup.mjs            # step-up: OTP -> acr=pro + cnf.jkt token -> /server-details 200
+node scripts/e2e-stepup-denied.mjs     # basicuser (no factor) is denied at step-up, no code/token issued
 node scripts/e2e-stepup-bruteforce.mjs # brute-force locks the OTP factor at failureFactor
-node scripts/e2e-stepup-refresh.mjs    # a refreshed elevated session stays acr=pro
+node scripts/e2e-stepup-refresh.mjs    # a refreshed elevated session stays acr=pro with a stable cnf.jkt
 ```
+
+The browser-facing path (login -> BFF proxy, no token in the browser) is covered
+separately by `node scripts/dpop-bff-verify.mjs`.
 
 The sections below document and verify each service individually.
 
@@ -130,7 +145,8 @@ To obtain a token the way the real app will, run `scripts/auth-code-flow.mjs`. I
 performs the **Authorization Code flow with PKCE** (the same flow next-auth uses
 in Step 3): it starts a temporary server on the client's redirect URI, opens the
 Keycloak login, and exchanges the returned `code` (plus the PKCE verifier and the
-confidential client secret) for tokens.
+confidential client secret) for tokens. Since the client now requires DPoP, the
+exchange signs a DPoP proof and the printed token carries a `cnf.jkt` binding.
 
 > Requires the browser to reach Keycloak at `http://keycloak:8081`, so add
 > `127.0.0.1 keycloak` to `/etc/hosts` first. Port `3000` must be free.
@@ -141,6 +157,7 @@ node scripts/auth-code-flow.mjs
 # a browser opens -> log in as testuser / password
 # the terminal prints the token response and decoded access-token claims:
 #   iss: http://keycloak:8081/realms/web   preferred_username: testuser   lifespan: 300s
+#   cnf.jkt (DPoP-bound): <thumbprint> (matches our key)
 ```
 
 ### Test credentials (dev-only)
@@ -234,20 +251,18 @@ Keycloak 26.6 ships DPoP as a generally available feature (no preview flag). The
   **still requires a proof** so the refreshed access token stays bound to the same
   key (measured, not assumed).
 
-Only the Keycloak side lands in this step; the backend proof validation (Step 2)
-and the frontend key + BFF proxy (Step 3) follow. A scratch check proves the IdP
-behavior directly (no frontend needed), obtaining a bound token and asserting
-`cnf.jkt`:
+The IdP behavior can be checked directly (no frontend needed) with a scratch
+script that obtains a bound token and asserts `cnf.jkt`:
 
 ```bash
 docker compose up -d keycloak --force-recreate   # re-import the realm
 node scripts/dpop-verify.mjs                      # -> STEP 1 PASSED: cnf.jkt bound, unbound rejected
 ```
 
-> Between this step and Step 3 the frontend and backend integration tests do not
-> yet speak DPoP, so `scripts/e2e-login.mjs` and `./gradlew test` are expected to
-> fail against the DPoP-requiring client until those steps land. This is the
-> planned incremental order, not a regression.
+The backend enforcement (Step 2) and the frontend server-tier key + BFF proxy
+(Step 3) are documented in their own sections below, and the full DPoP flow is
+exercised end to end by the migrated e2e suite (Step 4, listed under
+[Quick start](#quick-start)).
 
 ## Running the backend (Step 2)
 
@@ -392,9 +407,10 @@ node scripts/dpop-bff-verify.mjs   # login -> no token in session -> /hello via 
                                     # step-up (OTP) -> pro -> /server-details 200 via BFF
 ```
 
-> The older `scripts/e2e-login.mjs` / `e2e-stepup*.mjs` read the access token from
-> the session and called the backend directly; with the token now server-side behind
-> the BFF proxy they are being migrated to the proxy + DPoP in Step 4.
+> `dpop-bff-verify.mjs` covers the browser-facing path (through the same-origin BFF
+> proxy). The `scripts/e2e-*.mjs` suite covers the DPoP wire behavior directly
+> (holding the token + key so it can also assert the negative cases: no-proof,
+> wrong-key, `Bearer`, and replayed-`jti` are each `401`).
 
 ### Frontend development (outside Docker)
 
@@ -418,10 +434,14 @@ npm run dev                       # http://localhost:3000 (needs keycloak + back
   an invalid one) yields `401`. CORS allows the `http://localhost:3000` origin and
   the `Authorization` header so the browser can call `/hello`.
 - **Frontend session**: next-auth runs the Authorization Code + PKCE flow
-  server-side (the confidential client secret stays on the Next.js server). The
-  access token is kept in the next-auth session (in memory, not localStorage) and
-  sent as a Bearer token to the backend. When the 5-minute token expires, a
-  refresh callback silently renews it; if that fails, the UI shows an error toast.
+  server-side (the confidential client secret stays on the Next.js server) and, in
+  iteration 3, a **DPoP-bound** token exchange: the access token is `cnf.jkt`-bound
+  to a per-session ES256 key held only in the Next.js server. The browser holds
+  neither the token nor the key; it calls the backend through same-origin
+  `/api/backend/*` BFF routes that attach the token and a freshly signed DPoP proof
+  server-side. When the 5-minute token expires, a refresh callback silently renews
+  it (re-signing the proof, keeping the same key so `cnf.jkt` stays stable); if that
+  fails, the UI shows an error toast.
 
 ## Debug logging
 

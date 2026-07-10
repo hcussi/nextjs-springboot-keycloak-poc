@@ -9,6 +9,9 @@
 // REST API is used only to reset the counter before and after (so the test is
 // repeatable and leaves `bruteuser` unlocked).
 //
+// DPoP is orthogonal here: the account locks at the OTP step, before any token
+// exchange happens, so no DPoP proof is ever minted or needed in this flow.
+//
 // Prereq: Keycloak up (`docker compose up -d keycloak`) and `/etc/hosts` has
 // `127.0.0.1 keycloak`. Runs ~20s (failures must be spaced past the realm
 // `quickLoginCheckMilliSeconds` or Keycloak collapses them into one).

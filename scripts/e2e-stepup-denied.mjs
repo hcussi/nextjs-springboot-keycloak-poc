@@ -2,25 +2,39 @@
 // Headless negative test for step-up: a user WITHOUT a second factor must NOT be
 // able to reach acr=pro. `basicuser` (username + password only, no OTP) requests
 // `acr_values=pro`; because self-service TOTP enrollment is disabled in the realm
-// (CONFIGURE_TOTP required action off), Keycloak denies the step-up with
-// "Cannot login, credential setup required" instead of letting the user enroll a
-// factor inline. This asserts that failure path and that NO elevated session is
-// minted.
+// (CONFIGURE_TOTP required action off), Keycloak denies the step-up with "Cannot
+// login, credential setup required" instead of letting the user enroll a factor
+// inline. This asserts that failure path and that NO authorization code (hence no
+// token, elevated or otherwise) is ever issued.
 //
-// Complements scripts/e2e-stepup.mjs (the positive path for testuser, who has a
-// provisioned TOTP factor).
+// It drives the Authorization Code + PKCE flow DIRECTLY against Keycloak (like the
+// other iteration-3 e2e scripts): the denial happens at the authorization step,
+// before any token exchange, so DPoP does not enter into it. Complements
+// scripts/e2e-stepup.mjs (the positive path for testuser, who has a provisioned
+// TOTP factor).
 //
 // Prereq: the stack is up (`docker compose up -d --build`) and `/etc/hosts` has
 // `127.0.0.1 keycloak`.
 //
 // Usage:  node scripts/e2e-stepup-denied.mjs
-//   FRONTEND_URL (default http://localhost:3000)
+//   KEYCLOAK_BASE (default http://keycloak:8081)
 //   USERNAME / PASSWORD (default basicuser / password)
 
-const FRONT = process.env.FRONTEND_URL ?? "http://localhost:3000";
-const USERNAME = process.env.USERNAME ?? "basicuser";
-const PASSWORD = process.env.PASSWORD ?? "password";
+import crypto from "node:crypto";
+import { base64url } from "./lib/dpop.mjs";
+
+const cfg = {
+  authBase: process.env.KEYCLOAK_BASE ?? "http://keycloak:8081",
+  realm: process.env.KEYCLOAK_REALM ?? "web",
+  clientId: process.env.KEYCLOAK_CLIENT_ID ?? "nextjs-frontend",
+  redirectUri: "http://localhost:3000/api/auth/callback/keycloak",
+  username: process.env.USERNAME ?? "basicuser",
+  password: process.env.PASSWORD ?? "password",
+};
 const ACR = "pro";
+
+const realmBase = `${cfg.authBase}/realms/${cfg.realm}`;
+const authEndpoint = `${realmBase}/protocol/openid-connect/auth`;
 
 const jars = new Map();
 function jarFor(url) {
@@ -47,37 +61,43 @@ async function go(url, { method = "GET", body, headers = {} } = {}) {
   }
   return res;
 }
+
 const form = (obj) => new URLSearchParams(obj).toString();
 const formAction = (html) =>
   html.match(/action="([^"]*login-actions\/authenticate[^"]*)"/)?.[1]?.replace(/&amp;/g, "&");
 
 async function main() {
-  // 1) CSRF + begin sign-in -> authorize redirect (next-auth sets state + PKCE).
-  const csrf = await (await go(`${FRONT}/api/auth/csrf`)).json();
-  const signin = await go(`${FRONT}/api/auth/signin/keycloak`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: form({ csrfToken: csrf.csrfToken, callbackUrl: `${FRONT}/` }),
-  });
-  let authorizeUrl = signin.headers.get("location");
-  if (!authorizeUrl) throw new Error(`no authorize redirect (HTTP ${signin.status})`);
-  authorizeUrl += (authorizeUrl.includes("?") ? "&" : "?") + form({ acr_values: ACR });
+  // 1) Begin the auth-code flow directly, requesting LoA 2 (acr=pro).
+  const codeVerifier = base64url(crypto.randomBytes(32));
+  const codeChallenge = base64url(crypto.createHash("sha256").update(codeVerifier).digest());
+  const state = base64url(crypto.randomBytes(16));
+  const authUrl = `${authEndpoint}?${form({
+    response_type: "code",
+    client_id: cfg.clientId,
+    redirect_uri: cfg.redirectUri,
+    scope: "openid profile email",
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: "S256",
+    acr_values: ACR,
+  })}`;
 
   // 2) Login page -> submit basicuser credentials.
-  const loginAction = formAction(await (await go(authorizeUrl)).text());
+  const loginAction = formAction(await (await go(authUrl)).text());
   if (!loginAction) throw new Error("login form action not found");
   const res = await go(loginAction, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: form({ username: USERNAME, password: PASSWORD, credentialId: "" }),
+    body: form({ username: cfg.username, password: cfg.password, credentialId: "" }),
   });
 
-  // 3) Assert the step-up was DENIED, not elevated.
+  // 3) Assert the step-up was DENIED, not elevated: no redirect to the callback
+  //    (no authorization code), no OTP/enrollment form, and a denial page.
   const location = res.headers.get("location");
   const html = res.status === 200 || res.status >= 400 ? await res.text() : "";
 
   if (location?.includes("/api/auth/callback/keycloak")) {
-    throw new Error("SECURITY: basicuser reached the callback (a token was issued) without a second factor");
+    throw new Error("SECURITY: basicuser reached the callback (an authorization code was issued) without a second factor");
   }
   if (/name="otp"/.test(html)) {
     throw new Error("basicuser was shown an OTP/enrollment form; self-service enrollment should be disabled");
@@ -87,14 +107,8 @@ async function main() {
     throw new Error(`expected a step-up denial page, got HTTP ${res.status}: ${html.slice(0, 200)}`);
   }
 
-  // 4) And no next-auth session/token should exist.
-  const session = await (await go(`${FRONT}/api/auth/session`)).json();
-  if (session?.accessToken) {
-    throw new Error("SECURITY: a session with an access token exists after a denied step-up");
-  }
-
-  console.log(`step-up denied for ${USERNAME} (no second factor): HTTP ${res.status}, "credential setup required"`);
-  console.log(`\nE2E PASSED: step-up correctly denied, no acr=pro token issued`);
+  console.log(`step-up denied for ${cfg.username} (no second factor): HTTP ${res.status}, "credential setup required"`);
+  console.log(`\nE2E PASSED: step-up correctly denied, no authorization code (hence no acr=pro token) issued`);
 }
 
 main().catch((err) => {

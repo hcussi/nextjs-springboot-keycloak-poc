@@ -8,6 +8,10 @@
 // code_verifier + client_secret) for tokens. This is the same flow next-auth
 // performs in Step 3; the password grant in the README is only a CLI shortcut.
 //
+// Iteration 3: the `nextjs-frontend` client requires DPoP-bound tokens, so the
+// exchange also generates an ES256 key and signs a DPoP proof (RFC 9449) on the
+// token request; the demo prints the access token's `cnf.jkt` binding.
+//
 // Requirements (all already satisfied in this repo's dev setup):
 //   - Keycloak running:           docker compose up -d keycloak
 //   - /etc/hosts has:             127.0.0.1 keycloak   (browser must reach keycloak:8081)
@@ -21,6 +25,10 @@
 import http from "node:http";
 import crypto from "node:crypto";
 import { exec } from "node:child_process";
+import { generateKeyPair, jwkThumbprint, signProof } from "./lib/dpop.mjs";
+
+// One ES256 key for this run; signs the DPoP proof and is what cnf.jkt binds to.
+const dpopKey = generateKeyPair();
 
 const cfg = {
   // Single issuer host, reachable identically by browser (via /etc/hosts) and
@@ -69,10 +77,20 @@ function decodeJwtPayload(jwt) {
   }
 }
 
-async function exchangeCodeForTokens(code) {
+async function exchangeCodeForTokens(code, nonce) {
   const res = await fetch(tokenEndpoint, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      // DPoP proof for the token request (htm=POST, htu=token endpoint, no ath).
+      DPoP: signProof({
+        privateKey: dpopKey.privateKey,
+        publicJwk: dpopKey.publicJwk,
+        htm: "POST",
+        htu: tokenEndpoint,
+        nonce,
+      }),
+    },
     body: new URLSearchParams({
       grant_type: "authorization_code",
       code,
@@ -83,6 +101,11 @@ async function exchangeCodeForTokens(code) {
     }),
   });
   const body = await res.json();
+  // Retry once if Keycloak demands a nonce (we do not mandate nonces, but handle it).
+  if (!res.ok && !nonce && body.error === "use_dpop_nonce") {
+    const serverNonce = res.headers.get("dpop-nonce");
+    if (serverNonce) return exchangeCodeForTokens(code, serverNonce);
+  }
   if (!res.ok) {
     throw new Error(`Token exchange failed (${res.status}): ${JSON.stringify(body)}`);
   }
@@ -162,6 +185,8 @@ async function main() {
     console.log(`iss:                ${access.iss}`);
     console.log(`preferred_username: ${access.preferred_username}`);
     console.log(`lifespan (exp-iat):  ${access.exp - access.iat}s`);
+    const boundOk = access.cnf?.jkt === jwkThumbprint(dpopKey.publicJwk);
+    console.log(`cnf.jkt (DPoP-bound): ${access.cnf?.jkt} ${boundOk ? "(matches our key)" : "(MISMATCH!)"}`);
   }
   console.log("\nDone. Authorization Code + PKCE flow succeeded.");
 }
