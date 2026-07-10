@@ -3,69 +3,11 @@
 All notable changes to this proof of concept are documented here.
 This project is in active development; sections are added as each step lands.
 
-## [0.2.0] - 2026-07-10
+## [0.3.0] - 2026-07-10
 
-Two iterations of assurance hardening on top of the base login. **Step-up
-authentication** adds a higher-assurance level (`pro`), so a more sensitive endpoint
-can demand a stronger proof of identity than a plain password session. **DPoP
-sender-constrained tokens** then bind the access token to a key the client holds, so
-a stolen token is useless to anyone without that key. See [`PRD-2.md`](PRD-2.md) /
-[`PLAN-2.md`](PLAN-2.md) and [`PRD-3.md`](PRD-3.md) / [`PLAN-3.md`](PLAN-3.md).
-
-### Step-up authentication (Keycloak)
-
-- **Two assurance levels.** A normal login yields `acr=basic`; requesting `acr=pro`
-  runs a **TOTP second factor** on top of the password. The realm maps the levels
-  (`acr.loa.map`) and a custom browser flow runs the OTP step only when `pro` is
-  requested, re-challenging every time (so an existing `basic` session cannot slip
-  through) while leaving base login unchanged.
-- **Reproducible second factor.** The seed user `testuser` has a pre-seeded,
-  dev-only TOTP so the whole flow runs headlessly; `scripts/totp.mjs` prints the
-  current code.
-
-### Backend API (Spring Boot)
-
-- **New elevated `GET /server-details` endpoint.** Returns non-sensitive runtime
-  facts (app, version, JVM, uptime, active profiles, hostname, time) and requires
-  `acr=pro`; it deliberately exposes no secrets, tokens, or environment dumps.
-- **Standards-based step-up challenge.** A valid but base-level token is refused
-  with an RFC 9470 `401` (`insufficient_user_authentication`, `acr_values="pro"`)
-  telling the client to re-authenticate at a higher level, rather than an opaque
-  `403`. A missing or invalid token still gets the ordinary `401`. The required
-  level is configuration, not a hardcoded value.
-- **Tests.** Slice tests cover no-token, the base-token step-up challenge, and the
-  `pro`-token success; a Testcontainers integration test completes the real OTP to
-  obtain a `pro` token end to end.
-
-### Frontend (Next.js)
-
-- **Load server details, with transparent step-up.** A new button fetches
-  `/server-details`; on the step-up challenge the app re-authenticates at `pro`
-  (Keycloak prompts for the OTP), then **auto-retries once** and renders the
-  details. An assurance-level badge shows `basic` vs `pro`. Cancelling the second
-  factor shows a toast and leaves the base session and `/hello` intact.
-- **Redesigned interface.** A dark-first, minimalist "secure access" login and home
-  screen.
-
-### Security
-
-- **Second factor must be pre-provisioned.** Inline self-enrollment of TOTP during
-  step-up is disabled, so `pro` proves possession of an existing factor.
-- **Brute-force protection enabled.** The OTP now gates the elevated level, so
-  repeated bad codes lock the account temporarily.
-- **Server-side enforcement.** The required `acr` is checked on the signed token in
-  the backend; the challenge's requested level is allow-listed before use, and the
-  frontend's level indicator is only a hint. The committed dev TOTP seed carries a
-  distinct, loud not-for-production warning (a leaked second-factor seed is a higher
-  risk class than a password).
-
-### Tooling
-
-- **Headless step-up e2e suite.** `scripts/e2e-stepup.mjs` (OTP to `acr=pro` to
-  `/server-details`), `e2e-stepup-denied.mjs` (a factor-less user is denied),
-  `e2e-stepup-bruteforce.mjs` (the OTP factor locks under brute force), and
-  `e2e-stepup-refresh.mjs` (a refreshed elevated session stays `pro`).
-  `e2e-login.mjs` also asserts a base session is challenged on `/server-details`.
+**DPoP sender-constrained access tokens** (RFC 9449). The access token is bound to a
+key the client holds, so a stolen token is useless to anyone without that key. See
+[`PRD-3.md`](PRD-3.md) / [`PLAN-3.md`](PLAN-3.md).
 
 ### DPoP sender-constrained tokens (Keycloak)
 
@@ -129,12 +71,78 @@ a stolen token is useless to anyone without that key. See [`PRD-2.md`](PRD-2.md)
 
 ### Documentation
 
-- Step-up requirements (`PRD-2.md`) and plan (`PLAN-2.md`), and DPoP requirements
-  (`PRD-3.md`) and plan (`PLAN-3.md`), both marked complete. A README step-up section
-  and a DPoP + BFF section (levels, the seed TOTP note, the endpoint table under the
-  `DPoP` scheme, the browser walkthrough), a `CLAUDE.md` iteration pointer and DPoP
-  architecture note, and planning docs for future iterations (`PRD-4.md` distributed
-  replay protection, `PRD-5.md` browser-key SPA).
+- DPoP requirements (`PRD-3.md`) and plan (`PLAN-3.md`), both marked complete. A
+  README DPoP + BFF section (the endpoint table under the `DPoP` scheme, the browser
+  walkthrough), a `CLAUDE.md` iteration pointer and DPoP architecture note, and
+  planning docs for future iterations (`PRD-4.md` distributed replay protection,
+  `PRD-5.md` browser-key SPA).
+
+## [0.2.0] - 2026-07-05
+
+**Step-up authentication.** A higher-assurance level (`pro`) so a more sensitive
+endpoint can demand a stronger proof of identity than a plain password session. See
+[`PRD-2.md`](PRD-2.md) / [`PLAN-2.md`](PLAN-2.md).
+
+### Step-up authentication (Keycloak)
+
+- **Two assurance levels.** A normal login yields `acr=basic`; requesting `acr=pro`
+  runs a **TOTP second factor** on top of the password. The realm maps the levels
+  (`acr.loa.map`) and a custom browser flow runs the OTP step only when `pro` is
+  requested, re-challenging every time (so an existing `basic` session cannot slip
+  through) while leaving base login unchanged.
+- **Reproducible second factor.** The seed user `testuser` has a pre-seeded,
+  dev-only TOTP so the whole flow runs headlessly; `scripts/totp.mjs` prints the
+  current code.
+
+### Backend API (Spring Boot)
+
+- **New elevated `GET /server-details` endpoint.** Returns non-sensitive runtime
+  facts (app, version, JVM, uptime, active profiles, hostname, time) and requires
+  `acr=pro`; it deliberately exposes no secrets, tokens, or environment dumps.
+- **Standards-based step-up challenge.** A valid but base-level token is refused
+  with an RFC 9470 `401` (`insufficient_user_authentication`, `acr_values="pro"`)
+  telling the client to re-authenticate at a higher level, rather than an opaque
+  `403`. A missing or invalid token still gets the ordinary `401`. The required
+  level is configuration, not a hardcoded value.
+- **Tests.** Slice tests cover no-token, the base-token step-up challenge, and the
+  `pro`-token success; a Testcontainers integration test completes the real OTP to
+  obtain a `pro` token end to end.
+
+### Frontend (Next.js)
+
+- **Load server details, with transparent step-up.** A new button fetches
+  `/server-details`; on the step-up challenge the app re-authenticates at `pro`
+  (Keycloak prompts for the OTP), then **auto-retries once** and renders the
+  details. An assurance-level badge shows `basic` vs `pro`. Cancelling the second
+  factor shows a toast and leaves the base session and `/hello` intact.
+- **Redesigned interface.** A dark-first, minimalist "secure access" login and home
+  screen.
+
+### Security
+
+- **Second factor must be pre-provisioned.** Inline self-enrollment of TOTP during
+  step-up is disabled, so `pro` proves possession of an existing factor.
+- **Brute-force protection enabled.** The OTP now gates the elevated level, so
+  repeated bad codes lock the account temporarily.
+- **Server-side enforcement.** The required `acr` is checked on the signed token in
+  the backend; the challenge's requested level is allow-listed before use, and the
+  frontend's level indicator is only a hint. The committed dev TOTP seed carries a
+  distinct, loud not-for-production warning (a leaked second-factor seed is a higher
+  risk class than a password).
+
+### Tooling
+
+- **Headless step-up e2e suite.** `scripts/e2e-stepup.mjs` (OTP to `acr=pro` to
+  `/server-details`), `e2e-stepup-denied.mjs` (a factor-less user is denied),
+  `e2e-stepup-bruteforce.mjs` (the OTP factor locks under brute force), and
+  `e2e-stepup-refresh.mjs` (a refreshed elevated session stays `pro`).
+  `e2e-login.mjs` also asserts a base session is challenged on `/server-details`.
+
+### Documentation
+
+- Step-up requirements (`PRD-2.md`) and plan (`PLAN-2.md`), both marked complete. A
+  README step-up section (levels, the seed TOTP note, the elevated endpoint), a
+  `CLAUDE.md` iteration pointer and step-up architecture note.
 
 ## [0.1.1] - 2026-06-30
 
