@@ -1,6 +1,6 @@
 # PLAN (Iteration 3): DPoP Sender-Constrained Access Tokens
 
-**Status:** Draft, for review
+**Status:** Implemented (all four steps done)
 **Companion to:** [PRD-3.md](PRD-3.md)
 **Builds on:** [PLAN.md](PLAN.md) (iteration 1) and [PLAN-2.md](PLAN-2.md) (iteration 2), both complete
 **Date:** 2026-07-06
@@ -12,12 +12,12 @@ server tier** behind a **BFF proxy**, Keycloak is on **26.6** (DPoP GA, no previ
 flag), proofs are **ES256**, **nonces are handled reactively but not mandated**,
 and e2e coverage is **full** (positive bind + negative replay).
 
-> The Keycloak **26.6** bump (PRD-3 §8.2) is already done and verified green, so
-> this plan starts from the DPoP wiring itself. No further code is written until
-> this plan is approved, then it proceeds Step 1 → Step 4, verifying at each step.
-> Iteration-1 and iteration-2 behavior must keep passing throughout (PRD-3 NFR-7),
-> which for this iteration means the e2e scripts are **migrated to DPoP**, not left
-> untouched: once the client requires DPoP, a bearer call is meant to fail.
+> The Keycloak **26.6** bump (PRD-3 §8.2) was already done and verified green, so
+> this plan started from the DPoP wiring itself and proceeded Step 1 → Step 4,
+> verifying at each step. All four steps are now complete (Steps 1–3 in earlier PRs,
+> Step 4 here). Iteration-1 and iteration-2 behavior kept passing throughout (PRD-3
+> NFR-7), which for this iteration meant the e2e scripts were **migrated to DPoP**,
+> not left untouched: once the client requires DPoP, a bearer call is meant to fail.
 
 ---
 
@@ -475,27 +475,27 @@ is green. Re-import the realm first if it changed (`docker compose up -d keycloa
 
 ## 6. Deliverables checklist
 
-- [ ] `keycloak/realm-export.json`: `nextjs-frontend` `dpop.bound.access.tokens=true`
+- [x] `keycloak/realm-export.json`: `nextjs-frontend` `dpop.bound.access.tokens=true`
       (confirmed attribute key), still confidential
-- [ ] `backend/` resource-server DPoP proof validation composed with existing
+- [x] `backend/` resource-server DPoP proof validation composed with existing
       `JwtDecoder`/`AudienceValidator`/acr converter + correct handler precedence vs
       RFC 9470 step-up; **`Bearer` scheme refused for `cnf`-bound tokens** (FR-B11);
       **`iat` window + `jti` replay cache** (FR-B12, confirm-then-add)
-- [ ] `backend/` tests: `DpopProofs` helper, updated `KeycloakAuthCodeClient` (signs
+- [x] `backend/` tests: `DpopProofs` helper, updated `KeycloakAuthCodeClient` (signs
       proofs), slice + integration cases incl. **replay-without-proof, bearer-scheme,
       and same-`jti` replay all → 401**
-- [ ] `frontend/` `lib/dpop.ts` (server-only), `lib/auth.ts` (per-session key in a
+- [x] `frontend/` `lib/dpop.ts` (server-only), `lib/auth.ts` (per-session key in a
       **server-side store**, only an opaque reference in the JWE, DPoP on exchange +
       refresh, drop `session.accessToken`), `next-auth.d.ts`
-- [ ] `frontend/` BFF proxy routes (`/api/backend/hello`, `/api/backend/server-details`)
+- [x] `frontend/` BFF proxy routes (`/api/backend/hello`, `/api/backend/server-details`)
       signing proofs, **allow-listed request/response headers (no `Cookie` relay)**,
       relaying `WWW-Authenticate`; `page.tsx` calls same-origin proxies
-- [ ] key-hygiene verify-gates met (no key/reference in client `session`, cookie size
+- [x] key-hygiene verify-gates met (no key/reference in client `session`, cookie size
       under limit if fallback used, no cookie/`DPoP`-header logging)
-- [ ] `scripts/lib/dpop.mjs` + all e2e scripts migrated to DPoP, incl. the negative
+- [x] `scripts/lib/dpop.mjs` + all e2e scripts migrated to DPoP, incl. the negative
       assertions: no-proof, wrong-key, `Bearer`-scheme, and same-`jti` replay → 401
       (NFR-8, PRD-3 §6.5/§6.9)
-- [ ] `README.md` (DPoP + BFF section, endpoint table under `DPoP` scheme) +
+- [x] `README.md` (DPoP + BFF section, endpoint table under `DPoP` scheme) +
       `CLAUDE.md` iteration pointer and architecture note
 
 ---
