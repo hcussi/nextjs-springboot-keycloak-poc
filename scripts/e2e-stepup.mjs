@@ -1,34 +1,45 @@
 #!/usr/bin/env node
-// Headless end-to-end check of the STEP-UP (acr=pro) flow against a running
-// stack: drives next-auth + Keycloak like a browser, but requests `acr_values=pro`
-// so Keycloak forces the TOTP second factor. It computes the code from the seed
-// (reusing scripts/totp.mjs), submits it, establishes the elevated session, and
-// asserts the resulting access token carries `acr=pro`.
+// Headless end-to-end check of the STEP-UP (acr=pro) flow with DPoP against a
+// running stack. It drives the Authorization Code + PKCE flow DIRECTLY against
+// Keycloak with its own ES256 key, requesting `acr_values=pro` so Keycloak forces
+// the TOTP second factor, completes the OTP, and obtains an access token that is
+// BOTH elevated (acr=pro) AND DPoP-bound (cnf.jkt). It then calls the elevated
+// GET /server-details under the `DPoP` scheme and asserts it unlocks.
 //
-// This complements scripts/e2e-login.mjs (base login -> acr=basic). The full
-// step-up e2e including /server-details lands in Step 4; this focuses on proving
-// the OTP challenge and the elevated acr.
+// Iteration 3 sender-constrains the token, so the token exchange carries a DPoP
+// proof and every resource call carries a fresh proof bound to the token. This
+// complements scripts/e2e-login.mjs (base login) and scripts/e2e-stepup-denied.mjs
+// (a user without a second factor is refused).
 //
 // Prereq: the stack is up (`docker compose up -d --build`) and `/etc/hosts` has
 // `127.0.0.1 keycloak`. Seed user testuser / password with the dev TOTP seed.
 //
 // Usage:  node scripts/e2e-stepup.mjs
-//   FRONTEND_URL (default http://localhost:3000)
-//   API_URL      (default http://localhost:8080)
+//   KEYCLOAK_BASE (default http://keycloak:8081), API_URL (default http://localhost:8080)
 //   USERNAME / PASSWORD (default testuser / password)
 //   TOTP_SECRET  (default: the dev seed baked into scripts/totp.mjs)
 
+import crypto from "node:crypto";
+import { generateKeyPair, jwkThumbprint, signProof, base64url } from "./lib/dpop.mjs";
 import { totp, secondsLeft, DEFAULT_SEED } from "./totp.mjs";
 
-const FRONT = process.env.FRONTEND_URL ?? "http://localhost:3000";
-const API = process.env.API_URL ?? "http://localhost:8080";
-const USERNAME = process.env.USERNAME ?? "testuser";
-const PASSWORD = process.env.PASSWORD ?? "password";
-const SECRET = process.env.TOTP_SECRET ?? DEFAULT_SEED;
+const cfg = {
+  authBase: process.env.KEYCLOAK_BASE ?? "http://keycloak:8081",
+  realm: process.env.KEYCLOAK_REALM ?? "web",
+  clientId: process.env.KEYCLOAK_CLIENT_ID ?? "nextjs-frontend",
+  clientSecret: process.env.KEYCLOAK_CLIENT_SECRET ?? "nextjs-frontend-secret-dev",
+  redirectUri: "http://localhost:3000/api/auth/callback/keycloak",
+  api: process.env.API_URL ?? "http://localhost:8080",
+  username: process.env.USERNAME ?? "testuser",
+  password: process.env.PASSWORD ?? "password",
+  secret: process.env.TOTP_SECRET ?? DEFAULT_SEED,
+};
 const ACR = "pro";
 
-// Cookies are tracked per host (next-auth's localhost cookies stay separate from
-// Keycloak's), and redirects are followed manually.
+const realmBase = `${cfg.authBase}/realms/${cfg.realm}`;
+const authEndpoint = `${realmBase}/protocol/openid-connect/auth`;
+const tokenEndpoint = `${realmBase}/protocol/openid-connect/token`;
+
 const jars = new Map();
 function jarFor(url) {
   const host = new URL(url).host;
@@ -54,109 +65,171 @@ async function go(url, { method = "GET", body, headers = {} } = {}) {
   }
   return res;
 }
+
 const form = (obj) => new URLSearchParams(obj).toString();
 const formAction = (html) =>
   html.match(/action="([^"]*login-actions\/authenticate[^"]*)"/)?.[1]?.replace(/&amp;/g, "&");
 const decodeJwt = (jwt) => JSON.parse(Buffer.from(jwt.split(".")[1], "base64url").toString("utf8"));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+function assert(cond, msg) {
+  if (!cond) throw new Error(msg);
+}
+
 // A TOTP code with comfortable validity left: if the current window is about to
 // roll (<3s), wait for the next one so the code stays valid through submission.
 async function freshCode() {
   if (secondsLeft() < 3) await sleep((secondsLeft() + 1) * 1000);
-  return totp(SECRET);
+  return totp(cfg.secret);
+}
+
+// Submit the TOTP, retrying across 30s window rollovers, until Keycloak redirects
+// to the callback. Recomputing inside the same window would resubmit the same
+// rejected code, so on a rejection we wait for the next window first.
+async function submitOtp(action) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const code = await freshCode();
+    console.log(`OTP attempt ${attempt}: submitting ${code}`);
+    const res = await go(action, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: form({ otp: code, login: "Sign In" }),
+    });
+    if (res.status === 302) return res;
+    action = formAction(await res.text()) ?? action;
+    if (attempt < 3) await sleep((secondsLeft() + 1) * 1000);
+  }
+  throw new Error("OTP was not accepted after retries");
+}
+
+// Drive the auth-code flow directly against Keycloak with acr_values=pro. Handles
+// the password form and the OTP second factor. Returns { code, codeVerifier }.
+async function getProCode() {
+  const codeVerifier = base64url(crypto.randomBytes(32));
+  const codeChallenge = base64url(crypto.createHash("sha256").update(codeVerifier).digest());
+  const state = base64url(crypto.randomBytes(16));
+  let res = await go(`${authEndpoint}?${form({
+    response_type: "code",
+    client_id: cfg.clientId,
+    redirect_uri: cfg.redirectUri,
+    scope: "openid profile email",
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: "S256",
+    acr_values: ACR,
+  })}`);
+
+  for (let i = 0; i < 8; i++) {
+    const loc = res.headers.get("location");
+    if (res.status === 302 && loc) {
+      const redirect = new URL(loc, cfg.redirectUri);
+      const code = redirect.searchParams.get("code");
+      if (code) {
+        // Verify Keycloak echoed back our OAuth state (CSRF defense on the flow).
+        const returnedState = redirect.searchParams.get("state");
+        if (returnedState !== state) throw new Error(`OAuth state mismatch: sent ${state}, got ${returnedState}`);
+        return { code, codeVerifier };
+      }
+      res = await go(loc);
+      continue;
+    }
+    if (res.status === 200) {
+      const html = await res.text();
+      const action = formAction(html);
+      if (!action) throw new Error("no login/OTP form action in Keycloak page");
+      if (/name="otp"/.test(html)) {
+        res = await submitOtp(action);
+      } else {
+        res = await go(action, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: form({ username: cfg.username, password: cfg.password, credentialId: "" }),
+        });
+      }
+      continue;
+    }
+    throw new Error(`unexpected status ${res.status} while obtaining a code`);
+  }
+  throw new Error("did not obtain an authorization code");
+}
+
+// Exchange the code with a DPoP proof (htm=POST, htu=token endpoint), retrying
+// once on a use_dpop_nonce challenge.
+async function exchangeCode({ code, codeVerifier, key }, nonce) {
+  const headers = {
+    "Content-Type": "application/x-www-form-urlencoded",
+    DPoP: signProof({
+      privateKey: key.privateKey,
+      publicJwk: key.publicJwk,
+      htm: "POST",
+      htu: tokenEndpoint,
+      nonce,
+    }),
+  };
+  const res = await fetch(tokenEndpoint, {
+    method: "POST",
+    headers,
+    body: form({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: cfg.redirectUri,
+      client_id: cfg.clientId,
+      client_secret: cfg.clientSecret,
+      code_verifier: codeVerifier,
+    }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok && !nonce && json.error === "use_dpop_nonce") {
+    const serverNonce = res.headers.get("dpop-nonce");
+    if (serverNonce) return exchangeCode({ code, codeVerifier, key }, serverNonce);
+  }
+  return { res, json };
+}
+
+// Call a backend endpoint under the DPoP scheme with a fresh, token-bound proof.
+async function callBackend(path, { token, key }) {
+  const url = `${cfg.api}${path}`;
+  return fetch(url, {
+    method: "GET",
+    headers: {
+      authorization: `DPoP ${token}`,
+      DPoP: signProof({
+        privateKey: key.privateKey,
+        publicJwk: key.publicJwk,
+        htm: "GET",
+        htu: url,
+        accessToken: token,
+      }),
+    },
+  });
 }
 
 async function main() {
-  // 1) CSRF token for the sign-in POST.
-  const csrf = await (await go(`${FRONT}/api/auth/csrf`)).json();
+  const key = generateKeyPair();
+  const thumbprint = jwkThumbprint(key.publicJwk);
+  console.log(`DPoP key thumbprint (jkt): ${thumbprint}`);
 
-  // 2) Begin sign-in -> 302 to the Keycloak authorize URL (next-auth sets state + PKCE).
-  const signin = await go(`${FRONT}/api/auth/signin/keycloak`, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: form({ csrfToken: csrf.csrfToken, callbackUrl: `${FRONT}/` }),
-  });
-  let authorizeUrl = signin.headers.get("location");
-  if (!authorizeUrl) throw new Error(`no authorize redirect (HTTP ${signin.status})`);
+  // 1) Step-up login -> OTP -> elevated + bound token (acr=pro AND cnf.jkt).
+  const bound = await exchangeCode({ ...(await getProCode()), key });
+  assert(bound.res.ok, `token exchange failed: ${JSON.stringify(bound.json)}`);
+  const token = bound.json.access_token;
+  const claims = decodeJwt(token);
+  console.log(`access token: acr=${claims.acr}  cnf.jkt=${claims.cnf?.jkt}`);
+  assert(claims.acr === ACR, `expected acr=${ACR}, got acr=${claims.acr}`);
+  assert(claims.cnf?.jkt === thumbprint, `elevated token not bound to our key (cnf.jkt=${claims.cnf?.jkt})`);
 
-  // Ask Keycloak for LoA 2. Appending acr_values does not disturb next-auth's
-  // state/PKCE (validated from its own cookie on callback), it only tells
-  // Keycloak to run the step-up flow.
-  authorizeUrl += (authorizeUrl.includes("?") ? "&" : "?") + form({ acr_values: ACR });
+  // 2) The elevated bound token unlocks /server-details (the endpoint the UI calls).
+  const sd = await callBackend("/server-details", { token, key });
+  const details = await sd.json().catch(() => ({}));
+  console.log(`GET /server-details (pro + DPoP proof) -> ${sd.status} (application: ${details.application})`);
+  assert(sd.status === 200 && details.application, `elevated DPoP token failed on /server-details (HTTP ${sd.status})`);
 
-  // 3) Keycloak login page -> extract the form action.
-  const loginHtml = await (await go(authorizeUrl)).text();
-  const loginAction = formAction(loginHtml);
-  if (!loginAction) throw new Error("login form action not found");
+  // 3) Sanity: still a valid bound token for the base endpoint too.
+  const hello = await callBackend("/hello", { token, key });
+  console.log(`GET /hello (pro + DPoP proof) -> ${hello.status}`);
+  assert(hello.status === 200, `elevated token failed on /hello (HTTP ${hello.status})`);
 
-  // 4) Submit credentials. With acr=pro requested, Keycloak responds with the OTP
-  //    form (HTTP 200) rather than redirecting straight to the callback.
-  let res = await go(loginAction, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: form({ username: USERNAME, password: PASSWORD, credentialId: "" }),
-  });
-
-  let location = res.headers.get("location");
-  if (res.status === 200) {
-    let html = await res.text();
-    if (!/name="otp"/.test(html)) throw new Error("expected the OTP form after password, but did not get it (is acr=pro forcing step-up?)");
-
-    // 5) Submit the TOTP. A code submitted right at a 30s rotation boundary can be
-    //    rejected; to make this deterministic we never submit a code with under 3s
-    //    of validity left, and on a rejection we wait for the next window so the
-    //    retry uses a genuinely different code (recomputing within the same window
-    //    would just resubmit the same rejected code).
-    let accepted = false;
-    for (let attempt = 1; attempt <= 3 && !accepted; attempt++) {
-      const otpAction = formAction(html);
-      const code = await freshCode();
-      console.log(`OTP attempt ${attempt}: submitting ${code}`);
-      res = await go(otpAction, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: form({ otp: code, login: "Sign In" }),
-      });
-      location = res.headers.get("location");
-      if (res.status === 302 && location) { accepted = true; break; }
-      html = await res.text(); // rejected -> wait for a new window, then retry
-      if (attempt < 3) await sleep((secondsLeft() + 1) * 1000);
-    }
-    if (!accepted) throw new Error("OTP was not accepted after retries");
-  } else if (res.status !== 302) {
-    throw new Error(`unexpected status after password: ${res.status}`);
-  }
-
-  if (!location?.includes("/api/auth/callback/keycloak")) {
-    throw new Error(`expected callback redirect, got HTTP ${res.status} -> ${location}`);
-  }
-
-  // 6) Hit the callback -> next-auth exchanges the code and sets the session.
-  const callback = await go(location);
-  if (callback.status !== 302) throw new Error(`callback did not redirect (HTTP ${callback.status})`);
-
-  // 7) Read the session and assert the access token was elevated to acr=pro,
-  //    both in the token itself and in the surfaced session.acr UI hint.
-  const session = await (await go(`${FRONT}/api/auth/session`)).json();
-  if (!session?.accessToken) throw new Error(`no session/accessToken: ${JSON.stringify(session)}`);
-  const claims = decodeJwt(session.accessToken);
-  console.log("session.user:", JSON.stringify(session.user));
-  console.log(`access-token acr: ${claims.acr}  session.acr: ${session.acr}`);
-  if (claims.acr !== ACR) throw new Error(`expected acr=${ACR}, got acr=${claims.acr}`);
-  if (session.acr !== ACR) throw new Error(`session.acr not surfaced as ${ACR}: got ${session.acr}`);
-
-  // 8) The elevated token unlocks /server-details (the endpoint the UI calls).
-  const sd = await fetch(`${API}/server-details`, { headers: { authorization: `Bearer ${session.accessToken}` } });
-  const details = await sd.json();
-  console.log(`GET /server-details -> ${sd.status} (application: ${details.application})`);
-  if (sd.status !== 200 || !details.application) throw new Error("elevated token failed on /server-details");
-
-  // 9) Sanity: still a valid bearer for the base endpoint too.
-  const hello = await fetch(`${API}/hello`, { headers: { authorization: `Bearer ${session.accessToken}` } });
-  if (hello.status !== 200) throw new Error("elevated token failed on /hello");
-
-  console.log(`\nE2E PASSED: step-up login -> OTP -> session acr=${session.acr} -> /server-details 200`);
+  console.log(`\nE2E PASSED: step-up login -> OTP -> acr=${claims.acr} + cnf.jkt bound token -> /server-details 200 under DPoP`);
 }
 
 main().catch((err) => {
