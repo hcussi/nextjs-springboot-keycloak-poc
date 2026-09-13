@@ -3,6 +3,50 @@
 All notable changes to this proof of concept are documented here.
 This project is in active development; sections are added as each step lands.
 
+## [0.4.0] - 2026-08-02
+
+**Distributed DPoP replay protection** (Redis `jti`, configurable `iat` window,
+server-issued nonce). Hardens the iteration-3 DPoP proof validation so replay
+protection holds across horizontally scaled backend instances, not just within one
+JVM. See [`PRD-4.md`](PRD-4.md) / [`PLAN-4.md`](PLAN-4.md).
+
+### Distributed replay + freshness (Spring Boot)
+
+- **Cross-instance `jti` replay protection.** A DPoP proof's `jti` is now single-use
+  across **all** backend instances via an atomic set-if-absent in **Redis**, closing
+  the gap where the framework's per-JVM in-memory cache let a captured proof be
+  replayed once per instance. A replayed proof is refused `401 invalid_dpop_proof`.
+- **Configurable symmetric `iat` window.** The acceptable proof age is a single
+  property (`app.security.dpop.iat-window-seconds`, default 60s), which also bounds
+  the Redis `jti` TTL so the two never disagree. A proof outside the window is
+  refused; the framework's default only bounded future-dating.
+- **Fail-secure.** If Redis is unreachable, DPoP-protected requests are refused
+  (`503`) rather than silently falling back to weaker per-instance protection.
+- **All checks run in one post-authentication filter**, after the framework has
+  verified the proof (signature/`htm`/`htu`/`ath`/`cnf`) and before authorization,
+  so they compose with the audience and `acr` step-up checks without weakening them.
+
+### Server-issued DPoP nonce on `/server-details`
+
+- **The elevated endpoint requires a fresh nonce.** A proof with no valid nonce is
+  answered `401` with a `DPoP-Nonce` header and `WWW-Authenticate: DPoP
+  error="use_dpop_nonce"`; the client re-signs the proof with that nonce and retries.
+  The nonce is HMAC-signed and self-validating, so any instance verifies it with no
+  shared state. `/hello` never issues a nonce (no extra round trip).
+- **Nonce precedes step-up.** Nonce validation is authentication-time, so a base-level
+  client hitting `/server-details` sees the nonce challenge first and the RFC 9470
+  `acr` step-up challenge second; both are handled by the frontend's existing reactive
+  retries (the BFF proxy needed no change).
+
+### Orchestration & tests
+
+- **Redis + a second backend instance in `docker compose`**, both health-gated, so
+  `docker compose up` from a clean checkout yields a stack where distributed replay
+  protection works with no manual steps.
+- **New headless e2e** for distributed replay across two instances, the `iat` window,
+  and the nonce challenge; the Testcontainers integration tests gained a real Redis
+  and cover the nonce round-trip. Every prior e2e still passes.
+
 ## [0.3.0] - 2026-07-10
 
 **DPoP sender-constrained access tokens** (RFC 9449). The access token is bound to a

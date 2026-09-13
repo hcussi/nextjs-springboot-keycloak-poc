@@ -187,9 +187,12 @@ async function exchangeCode({ code, codeVerifier, key }, nonce) {
 }
 
 // Call a backend endpoint under the DPoP scheme with a fresh, token-bound proof.
-async function callBackend(path, { token, key }) {
+// Retries once on a use_dpop_nonce challenge (iteration 4: /server-details now
+// requires a server-issued DPoP nonce), re-signing the proof with the nonce, the
+// same way the BFF proxy does.
+async function callBackend(path, { token, key }, nonce) {
   const url = `${cfg.api}${path}`;
-  return fetch(url, {
+  const res = await fetch(url, {
     method: "GET",
     headers: {
       authorization: `DPoP ${token}`,
@@ -199,9 +202,17 @@ async function callBackend(path, { token, key }) {
         htm: "GET",
         htu: url,
         accessToken: token,
+        nonce,
       }),
     },
   });
+  if (res.status === 401 && !nonce) {
+    const serverNonce = res.headers.get("dpop-nonce");
+    if (serverNonce && (res.headers.get("www-authenticate") ?? "").includes("use_dpop_nonce")) {
+      return callBackend(path, { token, key }, serverNonce);
+    }
+  }
+  return res;
 }
 
 async function main() {

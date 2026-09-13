@@ -40,7 +40,9 @@ export function jwkThumbprint(jwk) {
 
 // Sign a DPoP proof for one request. `accessToken` adds the `ath` claim (resource
 // calls); `nonce` is echoed back when a server answered with `use_dpop_nonce`.
-export function signProof({ privateKey, publicJwk, htm, htu, nonce, accessToken }) {
+// `iat` (epoch seconds) overrides the issued-at, so a test can backdate a proof to
+// exercise the server's freshness window; it defaults to now.
+export function signProof({ privateKey, publicJwk, htm, htu, nonce, accessToken, iat }) {
   const header = {
     typ: "dpop+jwt",
     alg: "ES256",
@@ -51,7 +53,7 @@ export function signProof({ privateKey, publicJwk, htm, htu, nonce, accessToken 
     jti: crypto.randomUUID(),
     htm,
     htu: htu.split(/[?#]/)[0], // strip query/fragment per RFC 9449
-    iat: Math.floor(Date.now() / 1000),
+    iat: iat ?? Math.floor(Date.now() / 1000),
   };
   if (nonce) payload.nonce = nonce;
   if (accessToken) payload.ath = sha256b64url(accessToken);

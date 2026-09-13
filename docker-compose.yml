@@ -37,14 +37,43 @@ services:
     networks:
       - poc-net
 
+  # Shared store for DPoP proof `jti` replay keys (iteration 4), so a proof is
+  # single-use across ALL backend instances, not just within one JVM. Dev-only,
+  # in-memory (no persistence); production topology is out of scope (PRD-4 §2).
+  redis:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    container_name: poc-redis
+    # Not published to the host: only the backends reach it over the compose
+    # network (service name `redis`). Dev Redis is unauthenticated, so keeping it
+    # off the host shrinks its exposure. Production would add AUTH/ACL + TLS and
+    # network isolation (PRD-4 §2 lists Redis hardening as out of scope for the POC).
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    networks:
+      - poc-net
+
   backend:
     build:
       context: ./backend
     container_name: poc-backend
+    # The JWKS is fetched eagerly at startup; if that request times out (e.g. two
+    # instances warming Keycloak at once), the app exits. Retry rather than stay down.
+    restart: on-failure
     environment:
       # Issuer used to validate JWTs; reachable over the Docker network by
       # service name. Matches the realm issuer.
       KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
+      # Shared Redis for distributed DPoP jti replay protection.
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      # DPoP proof hardening knobs (defaults live in application.yml).
+      DPOP_NONCE_SECRET: ${DPOP_NONCE_SECRET}
       # Debug logging flag (off by default). When "true", the backend logs
       # non-secret DPoP / step-up diagnostics at INFO. See README.
       DEBUG: ${DEBUG:-false}
@@ -53,8 +82,49 @@ services:
     depends_on:
       keycloak:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       # App is up once /hello answers; 401 (no token) counts as healthy.
+      test:
+        - CMD
+        - bash
+        - -c
+        - >
+          exec 3<>/dev/tcp/127.0.0.1/8080 &&
+          printf 'GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -qE 'HTTP/1.1 (401|200)' <&3
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    networks:
+      - poc-net
+
+  # Second backend instance sharing the same Redis and Keycloak. It exists so the
+  # distributed-replay e2e can consume a proof on one JVM and prove the replay is
+  # refused on the OTHER (the framework's in-memory jti cache is per-JVM; Redis is
+  # what makes the decision cross-instance). The frontend still targets `backend`
+  # only (a load balancer is a PRD-4 non-goal).
+  backend-2:
+    build:
+      context: ./backend
+    container_name: poc-backend-2
+    restart: on-failure
+    environment:
+      KEYCLOAK_ISSUER: ${KEYCLOAK_ISSUER}
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+      DPOP_NONCE_SECRET: ${DPOP_NONCE_SECRET}
+      DEBUG: ${DEBUG:-false}
+    ports:
+      - "${BACKEND2_PORT}:8080"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
       test:
         - CMD
         - bash

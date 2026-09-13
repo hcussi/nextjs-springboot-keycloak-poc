@@ -165,7 +165,10 @@ async function exchangeCode({ code, codeVerifier, key }, nonce) {
 //   proofKey  - sign the proof with a DIFFERENT key than the one bound in cnf.jkt
 //   omitProof - send no DPoP header at all
 //   proof     - reuse a verbatim proof string (same jti) for the replay test
-async function callBackend(path, { token, key, scheme = "DPoP", proofKey, omitProof = false, proof } = {}) {
+//   nonce     - echo a server-issued DPoP nonce in the proof (iteration 4)
+// Retries once on a use_dpop_nonce challenge (only /server-details issues one; the
+// /hello negatives 401 for other reasons and are left untouched).
+async function callBackend(path, { token, key, scheme = "DPoP", proofKey, omitProof = false, proof, nonce } = {}) {
   const url = `${cfg.api}${path}`;
   const headers = { authorization: `${scheme} ${token}` };
   if (!omitProof) {
@@ -176,9 +179,17 @@ async function callBackend(path, { token, key, scheme = "DPoP", proofKey, omitPr
       htm: "GET",
       htu: url,
       accessToken: token,
+      nonce,
     });
   }
-  return fetch(url, { method: "GET", headers });
+  const res = await fetch(url, { method: "GET", headers });
+  if (res.status === 401 && !nonce && !proof && !omitProof) {
+    const serverNonce = res.headers.get("dpop-nonce");
+    if (serverNonce && (res.headers.get("www-authenticate") ?? "").includes("use_dpop_nonce")) {
+      return callBackend(path, { token, key, scheme, proofKey, nonce: serverNonce });
+    }
+  }
+  return res;
 }
 
 async function main() {
@@ -232,7 +243,8 @@ async function main() {
   assert(replay2.status === 401, `expected the replayed proof (same jti) to be refused, got ${replay2.status}`);
 
   // 4) /server-details at base level: no token -> ordinary 401; a valid-proof basic
-  //    token -> RFC 9470 step-up 401 (authentication succeeds, authorization does not).
+  //    token -> a use_dpop_nonce challenge first (nonce is authentication-time), then
+  //    after the reactive nonce retry, the RFC 9470 step-up 401 (authorization fails).
   const sdNoToken = await fetch(`${cfg.api}/server-details`);
   console.log(`GET /server-details (no token) -> ${sdNoToken.status}`);
   assert(sdNoToken.status === 401, `expected 401 without a token, got ${sdNoToken.status}`);

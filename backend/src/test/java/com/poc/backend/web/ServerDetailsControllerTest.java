@@ -16,7 +16,10 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import com.nimbusds.jose.jwk.ECKey;
 import com.poc.backend.config.SecurityConfig;
+import com.poc.backend.support.DpopProofs;
+import com.poc.backend.support.DpopSliceTestConfig;
 
 /**
  * Slice test for {@code /server-details} plus the real SecurityConfig (same
@@ -27,7 +30,7 @@ import com.poc.backend.config.SecurityConfig;
  * SecurityConfig's converter would derive from the claim.
  */
 @WebMvcTest(ServerDetailsController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, DpopSliceTestConfig.class})
 class ServerDetailsControllerTest {
 
     @Autowired
@@ -40,6 +43,23 @@ class ServerDetailsControllerTest {
     void returns401WhenNoToken() throws Exception {
         mockMvc.perform(get("/server-details"))
             .andExpect(status().isUnauthorized());
+    }
+
+    /**
+     * An unauthenticated request that merely carries a (well-formed but unverified)
+     * DPoP header must NOT be inspected by the hardening filter: it stays a plain
+     * 401 with no server-issued nonce. Guards against the filter trusting the
+     * anonymous principal and issuing a nonce (or consuming a jti) for unverified
+     * input.
+     */
+    @Test
+    void rawDpopHeaderWithoutAuthenticationIssuesNoNonce() throws Exception {
+        ECKey key = DpopProofs.generateKey();
+        String proof = DpopProofs.proof(key, "GET", "http://localhost/server-details", null, null);
+
+        mockMvc.perform(get("/server-details").header("DPoP", proof)) // no Authorization header
+            .andExpect(status().isUnauthorized())
+            .andExpect(header().doesNotExist("DPoP-Nonce"));
     }
 
     @Test
