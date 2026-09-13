@@ -52,7 +52,15 @@ proxy** that signs a fresh DPoP proof server-side.
 |-----------|---------------------------------|-----------|-------------------|
 | Keycloak  | Keycloak 26.6 (dev mode, DPoP GA) | 8081    | ✅ Implemented (Step 1) |
 | Backend   | Spring Boot 4.0 (Java 25)       | 8080      | ✅ Implemented (Step 2) |
+| Backend-2 | Spring Boot 4.0 (second instance, shares Redis) | 8082 | ✅ Implemented (Iteration 4) |
 | Frontend  | Next.js 16 + next-auth v4 + Tailwind | 3000 | ✅ Implemented (Step 3) |
+| Redis     | Redis 7 (dev, in-memory)        | 6379      | ✅ Implemented (Iteration 4) |
+
+Iteration 4 adds **distributed DPoP replay protection**: a proof's `jti` is
+single-use across **all** backend instances via **Redis** (a second backend instance
+runs on `8082` to demonstrate it), the `iat` freshness window is configurable
+(default 60s), and `/server-details` additionally requires a server-issued DPoP
+nonce. If Redis is unreachable, DPoP-protected requests fail closed (`503`).
 
 ## Prerequisites
 
@@ -95,6 +103,9 @@ node scripts/e2e-stepup.mjs            # step-up: OTP -> acr=pro + cnf.jkt token
 node scripts/e2e-stepup-denied.mjs     # basicuser (no factor) is denied at step-up, no code/token issued
 node scripts/e2e-stepup-bruteforce.mjs # brute-force locks the OTP factor at failureFactor
 node scripts/e2e-stepup-refresh.mjs    # a refreshed elevated session stays acr=pro with a stable cnf.jkt
+node scripts/e2e-dpop-replay-distributed.mjs  # a proof used on backend :8080 is refused when replayed on :8082
+node scripts/e2e-dpop-iat-window.mjs   # a proof backdated beyond the iat window is 401; a fresh one is 200
+node scripts/e2e-dpop-nonce.mjs        # /server-details: use_dpop_nonce challenge -> retry with nonce -> step-up
 ```
 
 The browser-facing path (login -> BFF proxy, no token in the browser) is covered
@@ -263,6 +274,41 @@ The backend enforcement (Step 2) and the frontend server-tier key + BFF proxy
 (Step 3) are documented in their own sections below, and the full DPoP flow is
 exercised end to end by the migrated e2e suite (Step 4, listed under
 [Quick start](#quick-start)).
+
+### Distributed replay protection, `iat` window, and nonce (Iteration 4)
+
+Iteration 3's replay protection used Spring Security's built-in **per-JVM** `jti`
+cache, so in a multi-instance deployment a captured proof could be replayed once per
+instance. Iteration 4 makes replay protection **distributed** and adds two defenses.
+See [`PRD-4.md`](PRD-4.md) / [`PLAN-4.md`](PLAN-4.md).
+
+- **Redis-backed `jti` replay.** Every DPoP proof's `jti` is recorded in **Redis**
+  with an atomic set-if-absent, so a proof is single-use across **all** backend
+  instances. `docker compose` runs a **second backend** (`backend-2`, port `8082`)
+  sharing the one Redis; `e2e-dpop-replay-distributed.mjs` uses a proof on `:8080`
+  and shows the replay refused on `:8082`.
+- **Configurable symmetric `iat` window.** A proof older or further in the future
+  than the window (default **60s**) is refused; the window is also the Redis `jti`
+  TTL. `e2e-dpop-iat-window.mjs` backdates a proof past the window and asserts `401`.
+- **Server-issued DPoP nonce on `/server-details`.** The elevated endpoint requires a
+  fresh, HMAC-self-validating nonce: a proof without one is answered `401` with a
+  `DPoP-Nonce` header and `use_dpop_nonce`, and the client retries with that nonce.
+  Because the nonce check is authentication-time, it precedes the `acr` step-up
+  challenge; `/hello` never issues a nonce. `e2e-dpop-nonce.mjs` covers this, and the
+  frontend BFF proxy already retries reactively, so the browser path is unchanged.
+- **Fail-secure.** If Redis is unreachable, DPoP-protected requests are refused
+  (`503`) rather than silently degrading to weaker per-instance protection.
+
+These are configuration, with defaults in `backend/src/main/resources/application.yml`
+(env-overridable, nothing hardcoded):
+
+| Property (env) | Default | Meaning |
+|----------------|---------|---------|
+| `app.security.dpop.iat-window-seconds` (`DPOP_IAT_WINDOW_SECONDS`) | `60` | Symmetric proof-age tolerance; also the Redis `jti` TTL |
+| `app.security.dpop.nonce.paths` (`DPOP_NONCE_PATHS`) | `/server-details` | Paths that require a server-issued nonce |
+| `app.security.dpop.nonce.ttl-seconds` (`DPOP_NONCE_TTL_SECONDS`) | `60` | Nonce validity lifetime |
+| `app.security.dpop.nonce.secret` (`DPOP_NONCE_SECRET`) | dev placeholder | HMAC key for the self-validating nonce (dev-only) |
+| `spring.data.redis.host` / `.port` (`REDIS_HOST` / `REDIS_PORT`) | `localhost` / `6379` | Redis connection |
 
 ## Running the backend (Step 2)
 

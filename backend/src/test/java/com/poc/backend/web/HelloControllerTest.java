@@ -21,6 +21,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.poc.backend.config.SecurityConfig;
+import com.poc.backend.support.DpopSliceTestConfig;
 
 /**
  * Slice test for the controller plus the real SecurityConfig, running on
@@ -29,7 +30,7 @@ import com.poc.backend.config.SecurityConfig;
  * post-processor injects a pre-authenticated token for the authorized case.
  */
 @WebMvcTest(HelloController.class)
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, DpopSliceTestConfig.class})
 class HelloControllerTest {
 
     @Autowired

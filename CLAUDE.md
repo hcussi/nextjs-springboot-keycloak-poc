@@ -20,6 +20,13 @@ only through a same-origin BFF proxy that signs the proof server-side (the token
 and key never leave the Next.js tier). See `PRD-3.md` / `PLAN-3.md` (all four steps
 done).
 
+Iteration 4 added **distributed DPoP replay protection**: a proof's `jti` is
+single-use across all backend instances via **Redis** (not just per-JVM), the `iat`
+freshness window is configurable (default 60s, and also the Redis `jti` TTL), and
+`/server-details` additionally requires a server-issued, HMAC-self-validating **DPoP
+nonce** (`/hello` does not). Redis-down fails closed (`503`). See `PRD-4.md` /
+`PLAN-4.md` (all four steps done).
+
 ## Commands
 
 Backend (`backend/`, Spring Boot 4 / Java 25 / Gradle wrapper):
@@ -45,12 +52,15 @@ npm run lint                     # eslint (flat config)
 Full stack and end-to-end check:
 
 ```bash
-docker compose up -d --build         # Keycloak + backend + frontend, health-gated startup
+docker compose up -d --build         # Keycloak + Redis + backend + backend-2 + frontend, health-gated
 node scripts/e2e-login.mjs           # DPoP login -> /hello 200 + negatives (no-proof/wrong-key/Bearer/replay = 401)
 node scripts/e2e-stepup.mjs          # step-up: OTP -> acr=pro + cnf.jkt -> /server-details 200 (testuser)
 node scripts/e2e-stepup-denied.mjs   # negative: basicuser (no factor) denied at acr=pro
 node scripts/e2e-stepup-bruteforce.mjs  # brute-force locks the OTP factor (bruteuser)
 node scripts/e2e-stepup-refresh.mjs  # refresh keeps acr=pro and a stable cnf.jkt binding
+node scripts/e2e-dpop-replay-distributed.mjs  # proof used on backend A is refused when replayed on backend B (Redis jti)
+node scripts/e2e-dpop-iat-window.mjs # a proof backdated beyond the iat window is 401; a fresh one is 200
+node scripts/e2e-dpop-nonce.mjs      # /server-details: use_dpop_nonce challenge -> retry -> step-up; /hello needs none
 node scripts/dpop-bff-verify.mjs     # browser path: login -> BFF proxy -> /hello, no token in browser
 node scripts/totp.mjs                # current TOTP code for the step-up seed
 docker compose down                  # stop (realm re-imports on next up)
@@ -58,8 +68,10 @@ docker compose down                  # stop (realm re-imports on next up)
 
 Every e2e script above drives the real DPoP flow (obtains a `cnf.jkt`-bound token
 and calls the backend under the `DPoP` scheme with a fresh proof); `e2e-login`
-additionally asserts the leaked-token negatives, and `dpop-bff-verify` covers the
-same-origin BFF proxy path the browser actually uses.
+additionally asserts the leaked-token negatives, `dpop-bff-verify` covers the
+same-origin BFF proxy path the browser actually uses, and the three `e2e-dpop-*`
+scripts cover the iteration-4 distributed replay, `iat` window, and nonce. The
+distributed-replay script needs `backend-2` up (port `8082`, env `API_URL_2`).
 
 ## Before committing
 
@@ -70,11 +82,12 @@ pre-commit gate would be flaky); treated as a required manual checklist instead:
    and reports findings by severity). Especially required when the change touches
    auth, tokens, the Keycloak realm/flows, secrets, or CORS.
 2. **Run the e2e suite green** against a running stack: `e2e-login.mjs`,
-   `e2e-stepup.mjs`, `e2e-stepup-denied.mjs`, `e2e-stepup-bruteforce.mjs`, and
-   `e2e-stepup-refresh.mjs` must all print `E2E PASSED`, and
-   `cd backend && ./gradlew test` must pass. If the realm changed, re-import first
-   (`docker compose up -d keycloak --force-recreate`) so the checks run against the
-   committed file, not stale in-memory state.
+   `e2e-stepup.mjs`, `e2e-stepup-denied.mjs`, `e2e-stepup-bruteforce.mjs`,
+   `e2e-stepup-refresh.mjs`, `e2e-dpop-replay-distributed.mjs`,
+   `e2e-dpop-iat-window.mjs`, and `e2e-dpop-nonce.mjs` must all print `E2E PASSED`,
+   and `cd backend && ./gradlew test` must pass. If the realm changed, re-import
+   first (`docker compose up -d keycloak --force-recreate`) so the checks run against
+   the committed file, not stale in-memory state.
 
 ## Architecture and non-obvious decisions
 
@@ -133,6 +146,27 @@ pre-commit gate would be flaky); treated as a required manual checklist instead:
   proof so the refreshed access token keeps a stable `cnf.jkt`. The e2e scripts
   (`scripts/lib/dpop.mjs` + `node:crypto`) and the backend tests (`DpopProofs`,
   `KeycloakAuthCodeClient`) exercise all of this, including the leaked-token negatives.
+- **DPoP hardening in one filter (iteration 4).** The framework's DPoP support is
+  auto-wired with **no override seam** (its `DPoPAuthenticationProvider` is
+  constructed directly by a package-private configurer, not post-processed, and its
+  `jti` cache is a per-JVM `LinkedHashMap`). So the iteration-4 checks live in a
+  single `DpopReplayProtectionFilter` (`com.poc.backend.dpop`) placed **before**
+  `AuthorizationFilter`: it reads the already-verified proof's claims (no re-verify),
+  enforces a **configurable symmetric `iat` window**, a **Redis** `jti` single-use
+  check (`SET dpop:jti:<jti> NX EX <window>`, **fail-closed `503`** if Redis is down),
+  and, for the configured paths only (`app.security.dpop.nonce.paths`, default
+  `/server-details`), a server-issued **HMAC self-validating nonce** (`DpopNonceService`,
+  no shared state). Running before authorization is deliberate: the nonce challenge
+  (`use_dpop_nonce`) is authentication-time and therefore **precedes** the `acr`
+  step-up `401`. `/hello` is not in the nonce path set, so it keeps its single round
+  trip. `DpopProperties` (`app.security.dpop.*`) holds the window/nonce config; the
+  in-memory `JtiReplayStore` fake in `DpopSliceTestConfig` keeps the `@WebMvcTest`
+  slices Redis-free, and the integration tests use a real Redis Testcontainer
+  (`RedisTestContainer`, singleton). Compose runs a **second backend instance**
+  (`backend-2`, port `8082`) sharing the one Redis so `e2e-dpop-replay-distributed`
+  proves the replay decision is cross-instance; both backends carry `restart:
+  on-failure` because the JWKS is fetched eagerly at startup and can time out when
+  two instances warm Keycloak at once.
 - **Gradle version catalog.** Dependency/plugin versions live in
   `backend/gradle/libs.versions.toml`; Spring artifacts are versionless (managed by
   the Boot BOM).

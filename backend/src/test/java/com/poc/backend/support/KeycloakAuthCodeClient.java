@@ -78,6 +78,15 @@ public class KeycloakAuthCodeClient {
         return DpopProofs.resourceProof(dpopKey, method, url, accessToken);
     }
 
+    /**
+     * Builds a resource proof that also echoes a server-issued DPoP {@code nonce}
+     * (iteration 4: {@code /server-details} requires one). A fresh {@code jti} is
+     * generated, so this is not a replay of the challenge proof.
+     */
+    public String resourceProof(String method, String url, String accessToken, String nonce) throws Exception {
+        return DpopProofs.proof(dpopKey, method, url, accessToken, nonce);
+    }
+
     /** Logs the user in via the Authorization Code + PKCE flow and returns the access token (base level). */
     public String accessToken(String username, String password) throws Exception {
         return accessToken(username, password, null, null);

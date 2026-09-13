@@ -1,6 +1,19 @@
 spring:
   application:
     name: backend
+  # Redis holds the distributed DPoP proof `jti` replay keys (iteration 4), so a
+  # proof is single-use across all backend instances, not just within one JVM.
+  # Lettuce connects lazily; the store is only touched on a DPoP request.
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # Short, explicit timeouts so the fail-closed path is also fail-FAST: a Redis
+      # host that is unreachable (partition, not just "connection refused") must not
+      # let request threads block on Lettuce's ~60s default and exhaust the worker
+      # pool. On timeout the jti check throws and the request is refused (503).
+      connect-timeout: ${REDIS_CONNECT_TIMEOUT:1s}
+      timeout: ${REDIS_TIMEOUT:1s}
   security:
     oauth2:
       resourceserver:
@@ -21,6 +34,21 @@ app:
     # integration test.
     stepup:
       acr: ${STEPUP_ACR:pro}
+    # DPoP proof hardening (iteration 4), enforced by DpopReplayProtectionFilter.
+    dpop:
+      # Symmetric proof-age tolerance (seconds): a proof whose `iat` is older or
+      # more in the future than this is rejected. Also the Redis `jti` TTL, so a
+      # jti is remembered exactly as long as it could still be replayed.
+      iat-window-seconds: ${DPOP_IAT_WINDOW_SECONDS:60}
+      nonce:
+        # Endpoints that additionally require a fresh server-issued DPoP nonce.
+        # Comma-separated; /hello is intentionally not listed (no extra round trip).
+        paths: ${DPOP_NONCE_PATHS:/server-details}
+        # Nonce validity lifetime (seconds).
+        ttl-seconds: ${DPOP_NONCE_TTL_SECONDS:60}
+        # HMAC key that signs/verifies the self-validating nonce. DEV-ONLY
+        # placeholder, committed like the other dev secrets; never use in prod.
+        secret: ${DPOP_NONCE_SECRET:dev-only-dpop-nonce-hmac-secret-not-for-production}
 
 server:
   port: 8080

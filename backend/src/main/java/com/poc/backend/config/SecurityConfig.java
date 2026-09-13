@@ -5,6 +5,8 @@ import java.util.Collection;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
@@ -19,9 +21,16 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
+import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.util.pattern.PathPatternParser;
+
+import com.poc.backend.dpop.DpopNonceService;
+import com.poc.backend.dpop.DpopReplayProtectionFilter;
+import com.poc.backend.dpop.JtiReplayStore;
 
 /**
  * Configures the app as an OAuth2 resource server: every request requires a
@@ -54,13 +63,23 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  */
 @Configuration
 @EnableWebSecurity
+@EnableConfigurationProperties(DpopProperties.class)
 public class SecurityConfig {
 
     /** Authority prefix for the {@code acr} claim, e.g. {@code acr=pro -> ACR_pro}. */
     private static final String ACR_AUTHORITY_PREFIX = "ACR_";
 
+    /** Spring MVC's {@code PathPatternParser} bean name; used so the DPoP nonce path
+     * matchers share the parser the authorization rules use (mirrors Spring Security's
+     * {@code PathPatternRequestMatcherBuilderFactoryBean}). */
+    private static final String MVC_PATTERN_PARSER_BEAN_NAME = "mvcPatternParser";
+
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http,
+            JtiReplayStore replayStore,
+            DpopNonceService nonceService,
+            DpopProperties dpopProperties,
+            ApplicationContext applicationContext,
             @Value("${app.security.stepup.acr:pro}") String requiredAcrProperty,
             @Value("${DEBUG:false}") boolean debug) throws Exception {
         // Trim so a stray-whitespace config value can't silently make the required
@@ -75,8 +94,32 @@ public class SecurityConfig {
                 .anyRequest().authenticated())
             .oauth2ResourceServer(oauth2 -> oauth2
                 .jwt(jwt -> jwt.jwtAuthenticationConverter(acrAuthenticationConverter()))
-                .accessDeniedHandler(new StepUpAccessDeniedHandler(requiredAcr, stepUpAuthority, debug)));
+                .accessDeniedHandler(new StepUpAccessDeniedHandler(requiredAcr, stepUpAuthority, debug)))
+            // Iteration 4: distributed jti replay + configurable iat window + the
+            // /server-details nonce, on the already-authenticated DPoP proof. Runs
+            // BEFORE authorization, so the nonce challenge precedes the acr step-up
+            // challenge (authentication-time vs authorization-time).
+            .addFilterBefore(
+                new DpopReplayProtectionFilter(replayStore, nonceService, dpopProperties,
+                    dpopNoncePathMatcherBuilder(applicationContext), debug),
+                AuthorizationFilter.class);
         return http.build();
+    }
+
+    /**
+     * Builds a path-matcher builder carrying the same {@link PathPatternParser} that
+     * Spring Security's {@code requestMatchers(...)} authorization rules use, so the
+     * DPoP nonce path check and the {@code /server-details} authorization rule match
+     * paths identically. This mirrors the framework's
+     * {@code PathPatternRequestMatcherBuilderFactoryBean}: prefer the MVC
+     * {@code mvcPatternParser} bean when present, else the default parser.
+     */
+    private static PathPatternRequestMatcher.Builder dpopNoncePathMatcherBuilder(ApplicationContext context) {
+        if (context.containsBean(MVC_PATTERN_PARSER_BEAN_NAME)) {
+            return PathPatternRequestMatcher.withPathPatternParser(
+                context.getBean(MVC_PATTERN_PARSER_BEAN_NAME, PathPatternParser.class));
+        }
+        return PathPatternRequestMatcher.withDefaults();
     }
 
     /**
@@ -125,9 +168,13 @@ public class SecurityConfig {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOrigins(List.of("http://localhost:3000"));
         config.setAllowedMethods(List.of("GET", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
-        // Let the browser fetch read the RFC 9470 step-up challenge on a 401.
-        config.setExposedHeaders(List.of("WWW-Authenticate"));
+        // "DPoP" carries the proof on a direct browser call (today the browser
+        // reaches the backend through the same-origin BFF, so this is belt-and-
+        // suspenders, but keeps the direct-call contract honest).
+        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "DPoP"));
+        // Let the browser fetch read the RFC 9470 step-up challenge and the
+        // iteration-4 DPoP nonce challenge on a 401.
+        config.setExposedHeaders(List.of("WWW-Authenticate", "DPoP-Nonce"));
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);

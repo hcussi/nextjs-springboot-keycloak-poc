@@ -23,8 +23,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.poc.backend.support.KeycloakAuthCodeClient;
+import com.poc.backend.support.RedisTestContainer;
 
 import dasniko.testcontainers.keycloak.KeycloakContainer;
+
+import org.springframework.test.web.servlet.MvcResult;
 
 /**
  * Full integration test for {@code /server-details} against a real Keycloak
@@ -56,6 +59,7 @@ class ServerDetailsControllerIntegrationTest {
         registry.add(
             "spring.security.oauth2.resourceserver.jwt.issuer-uri",
             () -> KEYCLOAK.getAuthServerUrl() + "/realms/web");
+        RedisTestContainer.registerProperties(registry);
     }
 
     @Autowired
@@ -72,33 +76,66 @@ class ServerDetailsControllerIntegrationTest {
             KEYCLOAK.getAuthServerUrl(), "web", CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
     }
 
+    /**
+     * A proof with no nonce is answered with a use_dpop_nonce challenge carrying a
+     * fresh DPoP-Nonce (iteration 4). The nonce check is authentication-time, so it
+     * fires even before the step-up authorization check below.
+     */
     @Test
-    void basicTokenGetsStepUpChallenge() throws Exception {
-        // A valid DPoP proof but an under-assured (acr=basic) token: authentication
-        // succeeds, so the RFC 9470 step-up 401 must win over any DPoP error.
+    void missingNonceGetsUseDpopNonceChallenge() throws Exception {
         KeycloakAuthCodeClient auth = auth();
-        String basic = auth.accessToken("testuser", "password"); // no acr -> acr=basic
+        String basic = auth.accessToken("testuser", "password");
 
         mockMvc.perform(get("/server-details")
                 .header("Authorization", "DPoP " + basic)
                 .header("DPoP", auth.resourceProof("GET", HTU, basic)))
+            .andExpect(status().isUnauthorized())
+            .andExpect(header().string("WWW-Authenticate", containsString("use_dpop_nonce")))
+            .andExpect(header().exists("DPoP-Nonce"));
+    }
+
+    @Test
+    void basicTokenGetsStepUpChallenge() throws Exception {
+        // A valid DPoP proof but an under-assured (acr=basic) token: after the nonce
+        // is provided, authentication succeeds, so the RFC 9470 step-up 401 wins.
+        KeycloakAuthCodeClient auth = auth();
+        String basic = auth.accessToken("testuser", "password"); // no acr -> acr=basic
+        String nonce = obtainNonce(auth, basic);
+
+        mockMvc.perform(get("/server-details")
+                .header("Authorization", "DPoP " + basic)
+                .header("DPoP", auth.resourceProof("GET", HTU, basic, nonce)))
             .andExpect(status().isUnauthorized())
             .andExpect(header().string("WWW-Authenticate", containsString("insufficient_user_authentication")))
             .andExpect(header().string("WWW-Authenticate", containsString("acr_values=\"pro\"")));
     }
 
     @Test
-    void proTokenReturnsServerDetails() throws Exception {
+    void proTokenWithNonceReturnsServerDetails() throws Exception {
         KeycloakAuthCodeClient auth = auth();
         String pro = auth.accessToken("testuser", "password", "pro", TOTP_SECRET);
+        String nonce = obtainNonce(auth, pro);
 
         mockMvc.perform(get("/server-details")
                 .header("Authorization", "DPoP " + pro)
-                .header("DPoP", auth.resourceProof("GET", HTU, pro)))
+                .header("DPoP", auth.resourceProof("GET", HTU, pro, nonce)))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.application").exists())
             .andExpect(jsonPath("$.javaVersion").exists())
             .andExpect(jsonPath("$.activeProfiles").isArray());
+    }
+
+    /** Drives the reactive nonce challenge once and returns the fresh DPoP-Nonce. */
+    private String obtainNonce(KeycloakAuthCodeClient auth, String token) throws Exception {
+        MvcResult challenge = mockMvc.perform(get("/server-details")
+                .header("Authorization", "DPoP " + token)
+                .header("DPoP", auth.resourceProof("GET", HTU, token)))
+            .andExpect(status().isUnauthorized())
+            .andExpect(header().string("WWW-Authenticate", containsString("use_dpop_nonce")))
+            .andReturn();
+        String nonce = challenge.getResponse().getHeader("DPoP-Nonce");
+        assertThat(nonce).as("DPoP-Nonce on the challenge").isNotBlank();
+        return nonce;
     }
 
     @Test

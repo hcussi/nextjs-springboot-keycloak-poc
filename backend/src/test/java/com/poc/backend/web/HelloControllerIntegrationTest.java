@@ -24,6 +24,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.poc.backend.support.KeycloakAuthCodeClient;
+import com.poc.backend.support.RedisTestContainer;
 
 import dasniko.testcontainers.keycloak.KeycloakContainer;
 
@@ -55,6 +56,9 @@ class HelloControllerIntegrationTest {
         registry.add(
             "spring.security.oauth2.resourceserver.jwt.issuer-uri",
             () -> KEYCLOAK.getAuthServerUrl() + "/realms/web");
+        // The DPoP jti replay check (iteration 4) needs Redis; point it at the
+        // shared test container so /hello DPoP calls are not refused fail-closed.
+        RedisTestContainer.registerProperties(registry);
     }
 
     @Autowired

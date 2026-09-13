@@ -21,6 +21,9 @@ repositories {
 dependencies {
     implementation libs.spring.boot.starter.web
     implementation libs.spring.boot.starter.oauth2.resource.server
+    // Distributed DPoP jti replay store (iteration 4). Lettuce client; version
+    // managed by the Boot BOM.
+    implementation libs.spring.boot.starter.data.redis
 
     compileOnly libs.lombok
     annotationProcessor libs.lombok
